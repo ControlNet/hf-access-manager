@@ -21,9 +21,6 @@ const plexMono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: "HF Access Manager",
   description: "Stateless, self-hosted dashboard for delegating Hugging Face gated repository access",
-  icons: {
-    icon: "/favicon.ico",
-  },
 };
 
 export default function RootLayout({

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE_NAME, verifyTokenWithSecrets } from "@/lib/session-key";
 
+/** Served by the app/ icon file convention; public by nature, and no secrets. */
+const PUBLIC_ICONS = new Set(["/favicon.ico", "/icon.svg", "/apple-icon.png"]);
+
 function applySecurityHeaders(response: NextResponse, isApiRoute = false): NextResponse {
   response.headers.set("X-Frame-Options", "DENY");
   response.headers.set("Content-Security-Policy", "frame-ancestors 'none'");
@@ -17,11 +20,12 @@ function applySecurityHeaders(response: NextResponse, isApiRoute = false): NextR
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Exclude static assets and next internals
+  // Exclude static assets and next internals. The site icons must stay
+  // reachable without a session, or the login tab renders without one.
   if (
     pathname.startsWith("/_next") ||
     pathname.startsWith("/api/auth/login") ||
-    pathname === "/favicon.ico"
+    PUBLIC_ICONS.has(pathname)
   ) {
     return applySecurityHeaders(NextResponse.next(), pathname.startsWith("/api/"));
   }
@@ -70,8 +74,8 @@ export const config = {
      * Match all request paths except for the ones starting with:
      * - _next/static (static files)
      * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
+     * - favicon.ico, icon.svg, apple-icon.png (site icons)
      */
-    "/((?!_next/static|_next/image|favicon.ico).*)",
+    "/((?!_next/static|_next/image|favicon.ico|icon.svg|apple-icon.png).*)",
   ],
 };

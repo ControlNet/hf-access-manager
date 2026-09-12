@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { CircleAlert, Loader2, Lock, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { GitHubLink } from "@/components/github-link";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 const GUARANTEES = [
@@ -90,11 +91,12 @@ export default function LoginPage() {
           </ul>
         </div>
 
-        <span className="relative font-mono text-[11px] text-label">AGPL-3.0 · self-hosted</span>
+        <span className="relative font-mono text-[11px] text-label">AGPL-3.0 · self-hosted · open source</span>
       </aside>
 
       <main className="relative flex flex-1 items-center justify-center px-4 py-12">
-        <div className="absolute right-4 top-4">
+        <div className="absolute right-4 top-4 flex items-center gap-0.5">
+          <GitHubLink />
           <ThemeToggle />
         </div>
 

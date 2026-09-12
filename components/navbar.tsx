@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { LogOut, RefreshCw, ShieldCheck } from "lucide-react";
+import { GitHubLink } from "@/components/github-link";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -92,6 +93,8 @@ export function Navbar({ onRefresh, isRefreshing = false, lastRefreshedAt }: Nav
                 <RefreshCw className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")} strokeWidth={1.6} />
               </button>
             )}
+
+            <GitHubLink />
 
             <ThemeToggle />
 

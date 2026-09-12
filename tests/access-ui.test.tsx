@@ -23,7 +23,7 @@ const setup = (status: RequestStatus = "pending", onRefreshed = vi.fn()) => rend
 const switchTab = (name: string) => fireEvent.mouseDown(screen.getByRole("tab", { name: new RegExp(`^${name}`) }), { button: 0, ctrlKey: false });
 
 describe("real dashboard integration", () => {
-  it("keeps uncertain drawer actions disabled if reconciliation no longer finds the request", async () => {
+  it("leaves no actionable surface for a request reconciliation no longer finds", async () => {
     let posted = false;
     vi.stubGlobal("fetch", vi.fn().mockImplementation(async (_url, init) => {
       if (init?.method === "POST") { posted = true; throw new Error("Synthetic disconnected response"); }
@@ -31,12 +31,52 @@ describe("real dashboard integration", () => {
     }));
     setup();
     await screen.findByText("@synthetic-user");
-    fireEvent.click(screen.getByTitle("View full request details"));
-    const drawer = await screen.findByRole("dialog");
-    await act(async () => fireEvent.click(within(drawer).getByRole("button", { name: "Approve" })));
-    expect(screen.getByRole("dialog")).toBeTruthy();
-    expect(within(drawer).getByText(/no longer in the loaded list/)).toBeTruthy();
-    expect((within(drawer).getByRole("button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Approve" })));
+    // Reconciliation drops the request, so the row and its actions go with it.
+    expect(screen.queryByText("@synthetic-user")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("shows every answer on the list itself, expanding the long tail in place", async () => {
+    const detailed = {
+      ...row(),
+      fullName: "Synthetic Reviewer",
+      fields: {
+        affiliation: "Example University",
+        role: "PhD student",
+        country: "Australia",
+        accepted_license: true,
+        intended_use: "Synthetic purpose text that is long enough to be treated as the narrative answer.",
+        ethics_approval: "REC-2024-118",
+        redistribute: false,
+        newsletter: "",
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => new Response(JSON.stringify({ data: {
+      requests: [detailed], errors: [], hasMore: false, truncated: false,
+      repositoryPagination: { "model:review/synthetic": {} },
+    } }))));
+    render(<AccessRequestList configuredRepositories={[repo]} />);
+
+    // Collapsed: the four deciding answers plus the narrative, no second surface.
+    await screen.findByText("Example University");
+    expect(screen.getByText("PhD student")).toBeTruthy();
+    expect(screen.getByText("Australia")).toBeTruthy();
+    expect(screen.getByText(/Synthetic purpose text/)).toBeTruthy();
+    expect(screen.queryByText("REC-2024-118")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    const expander = screen.getByRole("button", { name: /\+3 more answers/ });
+    expect(expander.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(expander);
+
+    // Expanded in place: the rest of the form, still inside the row.
+    expect(screen.getByText("REC-2024-118")).toBeTruthy();
+    expect(screen.getByText("Example University")).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("button", { name: /Hide extra answers/ })).toBeTruthy();
   });
 
   it("does not turn a drained truncated window into inbox zero", async () => {
@@ -48,7 +88,7 @@ describe("real dashboard integration", () => {
     setup();
     await screen.findByText("@synthetic-user");
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Approve" })));
-    expect(screen.queryByText("Inbox zero!")).toBeNull();
+    expect(screen.queryByText("Nothing waiting")).toBeNull();
     expect(screen.getByRole("tab", { name: "Pending 0+" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Load more requests" })).toBeTruthy();
   });
@@ -113,7 +153,7 @@ describe("real dashboard integration", () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => response()));
     const view = render(<AccessRequestList configuredRepositories={[repo]} refreshTrigger={0} />);
     await screen.findByText("@synthetic-user");
-    const search = screen.getByPlaceholderText("Search name, username, email, form fields...");
+    const search = screen.getByPlaceholderText("Search name, username, email, or any form answer");
     fireEvent.change(search, { target: { value: "synthetic" } });
     fireEvent.change(screen.getByRole("combobox", { name: "Filter by repository" }), { target: { value: "model:review/synthetic" } });
     await act(async () => view.rerender(<AccessRequestList configuredRepositories={[repo]} refreshTrigger={1} />));
@@ -143,7 +183,7 @@ describe("real dashboard integration", () => {
     await act(async () => finish(new Response(JSON.stringify({ data: { success: true } }))));
     expect(screen.getByRole("tab", { name: "Accepted 1" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "Pending 0" })).toBeTruthy();
-    expect(screen.getByText("Inbox zero!")).toBeTruthy();
+    expect(screen.getByText("Nothing waiting")).toBeTruthy();
   });
 
   it("retains only the failed repository identity for the same username", async () => {
@@ -161,7 +201,7 @@ describe("real dashboard integration", () => {
     render(<AccessRequestList configuredRepositories={[repo, other]} />);
     const boxes = await screen.findAllByRole("checkbox", { name: "Select synthetic-user" });
     boxes.forEach(box => fireEvent.click(box));
-    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Approve (2)" })));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Approve 2" })));
     expect(screen.getAllByRole("checkbox", { name: "Select synthetic-user" })).toHaveLength(1);
     expect(screen.getByRole("checkbox", { name: "Select synthetic-user" }).getAttribute("data-state")).toBe("checked");
     expect(screen.getByRole("option", { name: /review\/synthetic \(0\)/ })).toBeTruthy();
@@ -197,16 +237,16 @@ describe("real dashboard integration", () => {
   });
 
   it.each([
-    ["pending", "Approve"], ["pending", "Reject"], ["accepted", "Revoke Access"], ["rejected", "Approve (Restore)"],
-  ] as const)("keeps the %s drawer open after %s fails", async (status, action) => {
+    ["pending", "Approve"], ["pending", "Reject"], ["accepted", "Revoke"], ["rejected", "Restore"],
+  ] as const)("keeps the %s row reviewable in place after %s fails", async (status, action) => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(async (_url, init) => init?.method === "POST"
       ? new Response(JSON.stringify({ error: { message: "Synthetic denial" } }), { status: 403 }) : response(status)));
     setup(status);
     await screen.findByText("@synthetic-user");
-    fireEvent.click(screen.getByTitle("View full request details"));
-    const dialog = await screen.findByRole("dialog");
-    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: action })); });
-    expect(screen.getByRole("dialog")).toBeTruthy();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: action })); });
+    // The request survives the refusal and stays actionable without a second surface.
+    expect(screen.getByText("@synthetic-user")).toBeTruthy();
+    expect((screen.getByRole("button", { name: action }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("does not claim inbox zero or refresh success during an upstream outage", async () => {
@@ -214,14 +254,14 @@ describe("real dashboard integration", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response("pending", { empty: true, errors: true })));
     setup("pending", refreshed);
     await screen.findByRole("alert");
-    expect(screen.queryByText("Inbox zero!")).toBeNull();
+    expect(screen.queryByText("Nothing waiting")).toBeNull();
     expect(refreshed).not.toHaveBeenCalled();
   });
 
   it("records a known zero pending count", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response("pending", { empty: true })));
     setup();
-    await screen.findByText("Inbox zero!");
+    await screen.findByText("Nothing waiting");
     expect(screen.getByRole("option", { name: /review\/synthetic \(0\)/ })).toBeTruthy();
   });
 
@@ -234,7 +274,7 @@ describe("real dashboard integration", () => {
     await screen.findByText("@synthetic-user-0");
     fireEvent.click(screen.getByRole("checkbox", { name: "Select synthetic-user-0" }));
     fireEvent.click(screen.getByRole("button", { name: "Select first 100" }));
-    fireEvent.click(screen.getByRole("button", { name: "Approve (100)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve 100" }));
     const post = fetcher.mock.calls.find(([, init]) => init?.method === "POST");
     expect(JSON.parse(post![1].body).items).toHaveLength(100);
     expect((screen.getAllByRole("button", { name: "Reject" })[0] as HTMLButtonElement).disabled).toBe(true);

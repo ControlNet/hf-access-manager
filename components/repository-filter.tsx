@@ -1,8 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Search, X, Filter } from "lucide-react";
-import { Input } from "@/components/ui/input";
+import { ChevronDown, Search, X } from "lucide-react";
 import { ManagedRepository, RepoType } from "@/lib/types";
 import { formatRepositoryBadge } from "@/lib/counts";
 
@@ -19,6 +18,9 @@ interface RepositoryFilterProps {
   showPendingCounts?: boolean;
 }
 
+const SELECT_CLASS =
+  "h-8 appearance-none truncate rounded-md border border-input bg-muted pl-3 pr-8 text-xs text-value focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:text-[12.5px]";
+
 export function RepositoryFilter({
   searchQuery,
   onSearchChange,
@@ -31,7 +33,6 @@ export function RepositoryFilter({
   repoPendingTruncated = {},
   showPendingCounts = true,
 }: RepositoryFilterProps) {
-  // Extract distinct configured repo types
   const configuredTypes = React.useMemo(() => {
     const types = new Set<RepoType>();
     for (const r of configuredRepositories) {
@@ -40,7 +41,6 @@ export function RepositoryFilter({
     return Array.from(types);
   }, [configuredRepositories]);
 
-  // Filter repo options based on currently selected repo type
   const availableRepoOptions = React.useMemo(() => {
     if (selectedType === "all") return configuredRepositories;
     return configuredRepositories.filter((r) => r.type === selectedType);
@@ -55,36 +55,37 @@ export function RepositoryFilter({
   };
 
   return (
-    <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
-      {/* Search Input */}
-      <div className="relative flex-1 min-w-[200px]">
-        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder="Search name, username, email, form fields..."
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+      <div className="relative min-w-[200px] flex-1">
+        <Search
+          className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+          strokeWidth={1.6}
+        />
+        <input
+          type="search"
+          placeholder="Search name, username, email, or any form answer"
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
-          className="pl-8 h-9 text-xs sm:text-sm bg-background"
+          className="h-8 w-full rounded-md border border-input bg-muted pl-8 pr-8 text-xs text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:text-[12.5px]"
         />
         {searchQuery && (
           <button
+            type="button"
             onClick={() => onSearchChange("")}
-            className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
             aria-label="Clear search"
           >
-            <X className="h-4 w-4" />
+            <X className="h-3.5 w-3.5" strokeWidth={1.8} />
           </button>
         )}
       </div>
 
-      {/* Dropdown Filters */}
       <div className="flex flex-wrap items-center gap-2">
-        {/* Repo Type Filter */}
-        <div className="flex items-center">
+        <div className="relative">
           <select
             value={selectedType}
             onChange={(e) => {
               onTypeChange(e.target.value);
-              // Reset repo filter if current repo is of different type
               if (e.target.value !== "all" && selectedRepoKey !== "all") {
                 const currentRepo = configuredRepositories.find(
                   (r) => `${r.type}:${r.repoId}` === selectedRepoKey
@@ -94,30 +95,27 @@ export function RepositoryFilter({
                 }
               }
             }}
-            className="h-9 rounded-md border border-input bg-background px-3 py-1 text-xs sm:text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            className={SELECT_CLASS}
             aria-label="Filter by repository type"
           >
             <option value="all">All types</option>
             {configuredTypes.map((type) => (
               <option key={type} value={type}>
-                {type === "model"
-                  ? "Models"
-                  : type === "dataset"
-                  ? "Datasets"
-                  : type === "space"
-                  ? "Spaces"
-                  : type}
+                {type === "model" ? "Models" : type === "dataset" ? "Datasets" : type === "space" ? "Spaces" : type}
               </option>
             ))}
           </select>
+          <ChevronDown
+            className="pointer-events-none absolute right-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground"
+            strokeWidth={1.8}
+          />
         </div>
 
-        {/* Specific Repository Filter */}
-        <div className="flex items-center">
+        <div className="relative">
           <select
             value={selectedRepoKey}
             onChange={(e) => onRepoKeyChange(e.target.value)}
-            className="h-9 max-w-[260px] truncate rounded-md border border-input bg-background px-3 py-1 text-xs sm:text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            className={`${SELECT_CLASS} max-w-[260px]`}
             aria-label="Filter by repository"
           >
             <option value="all">All repositories</option>
@@ -136,17 +134,21 @@ export function RepositoryFilter({
               );
             })}
           </select>
+          <ChevronDown
+            className="pointer-events-none absolute right-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground"
+            strokeWidth={1.8}
+          />
         </div>
 
-        {/* Clear Filters Button */}
         {hasActiveFilters && (
           <button
+            type="button"
             onClick={clearFilters}
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground px-2 py-1 transition-colors"
+            className="flex items-center gap-1 px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
             title="Reset all filters"
           >
-            <X className="h-3.5 w-3.5" />
-            <span>Clear</span>
+            <X className="h-3 w-3" strokeWidth={1.8} />
+            Clear
           </button>
         )}
       </div>

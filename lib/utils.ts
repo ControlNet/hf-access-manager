@@ -53,11 +53,3 @@ export function formatDateTime(dateString?: string): string {
     timeStyle: "short",
   }).format(date);
 }
-
-export function formatFieldLabel(key: string): string {
-  // Convert camelCase or snake_case to Title Case: "intendedUsage" -> "Intended Usage"
-  return key
-    .replace(/_/g, " ")
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .replace(/^\w/, (c) => c.toUpperCase());
-}

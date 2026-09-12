@@ -1,23 +1,31 @@
 "use client";
 
 import * as React from "react";
-import {
-  CheckCircle2,
-  AlertCircle,
-  HelpCircle,
-  ExternalLink,
-  Shield,
-  Lock,
-  Globe,
-  RefreshCw,
-} from "lucide-react";
+import { CircleAlert, ExternalLink, Globe, Lock, RefreshCw } from "lucide-react";
 import { RepositoryStatus as IRepositoryStatus } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 interface RepositoryStatusListProps {
   initialStatuses?: IRepositoryStatus[];
+}
+
+const GRID = "grid grid-cols-[minmax(0,1fr)_100px_112px] gap-4 lg:grid-cols-[minmax(0,1fr)_100px_112px_82px_82px_82px_150px]";
+
+function Tile({ label, value, note, tone }: { label: string; value: string; note: string; tone?: string }) {
+  return (
+    <div className="rounded-lg border bg-card px-3.5 py-3">
+      <div className="field-label">{label}</div>
+      <div className="mt-1.5 flex flex-wrap items-baseline gap-2">
+        <span className={cn("font-mono text-[22px] font-semibold tabular", tone ?? "text-foreground")}>
+          {value}
+        </span>
+        <span className="text-xs text-muted-foreground">{note}</span>
+      </div>
+    </div>
+  );
 }
 
 export function RepositoryStatusList({ initialStatuses = [] }: RepositoryStatusListProps) {
@@ -65,158 +73,216 @@ export function RepositoryStatusList({ initialStatuses = [] }: RepositoryStatusL
     return () => { activeRead.current?.abort(); activeRead.current = null; };
   }, [initialStatuses.length, fetchStatuses]);
 
+  const connected = statuses.filter((s) => s.status === "connected");
+  const failing = statuses.filter((s) => s.status === "error");
+  const unsupported = statuses.filter((s) => s.status === "unsupported");
+  const loadedPending = connected.reduce((sum, s) => sum + (s.pendingCount ?? 0), 0);
+  const pendingTruncated = connected.some((s) => s.pendingHasMore);
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h2 className="text-xl font-bold tracking-tight text-foreground">
-            Configured Repositories
-          </h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Operational health diagnostics for repositories defined in{" "}
-            <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">
+          <h1 className="text-xl font-semibold -tracking-[0.015em] text-foreground">
+            Configured repositories
+          </h1>
+          <p className="mt-1.5 text-[12.5px] leading-[1.5] text-muted-foreground">
+            Read straight from{" "}
+            <code className="rounded border bg-muted px-1.5 py-0.5 font-mono text-xs text-value">
               HF_REPOSITORIES
             </code>
-            .
+            . This dashboard can only ever touch what is listed here.
           </p>
         </div>
 
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={fetchStatuses}
-          disabled={isRefreshing}
-          className="h-8 gap-1.5 text-xs"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
-          <span>{isRefreshing ? "Checking..." : "Recheck Health"}</span>
+        <Button variant="outline" size="sm" onClick={fetchStatuses} disabled={isRefreshing} className="gap-1.5">
+          <RefreshCw className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")} strokeWidth={1.6} />
+          {isRefreshing ? "Checking..." : "Recheck Health"}
         </Button>
       </div>
 
-      {loadError && <p role="alert" className="rounded border border-destructive/30 p-3 text-sm text-destructive">
-        {loadError}. Recheck Health to retry; previous results may be stale.
-      </p>}
+      {loadError && (
+        <div
+          role="alert"
+          className="flex items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/[0.06] p-3 text-[12.5px] leading-[1.45] text-danger"
+        >
+          <CircleAlert className="mt-px h-4 w-4 shrink-0 text-destructive" strokeWidth={1.6} />
+          <span>{loadError}. Recheck Health to retry; previous results may be stale.</span>
+        </div>
+      )}
+
+      {statuses.length > 0 && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <Tile
+            label="Reachable"
+            value={String(connected.length)}
+            note={`of ${statuses.length} configured`}
+            tone="text-success"
+          />
+          <Tile
+            label="Pending loaded"
+            value={`${loadedPending}${pendingTruncated ? "+" : ""}`}
+            note={failing.length > 0 ? `${failing.length} repo down — incomplete` : "across reachable repositories"}
+          />
+          <Tile
+            label="Failing"
+            value={String(failing.length)}
+            note={failing.length === 0 ? "none" : "see the rows below"}
+            tone={failing.length > 0 ? "text-destructive" : "text-muted-foreground"}
+          />
+          <Tile
+            label="Unsupported"
+            value={String(unsupported.length)}
+            note="Spaces have no gating API"
+            tone="text-muted-foreground"
+          />
+        </div>
+      )}
 
       {isLoading ? (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="overflow-hidden rounded-lg border bg-card">
           {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="h-44 rounded-lg border bg-card p-5 animate-pulse" />
+            <div key={i} className="h-14 animate-pulse border-b border-divider bg-muted/60 last:border-b-0" />
           ))}
         </div>
       ) : statuses.length === 0 ? (
-        <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          {loadError ? "Repository health is currently unavailable." : "No repositories configured in HF_REPOSITORIES."}
+        <div className="rounded-lg border border-dashed p-8 text-center text-[12.5px] text-muted-foreground">
+          {loadError
+            ? "Repository health is currently unavailable."
+            : "No repositories configured in HF_REPOSITORIES."}
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="overflow-hidden rounded-lg border bg-card">
+          <div className={cn(GRID, "hidden h-8 items-center bg-muted px-4 lg:grid")}>
+            <span className="field-label">Repository</span>
+            <span className="field-label">Visibility</span>
+            <span className="field-label">Gating</span>
+            <span className="field-label text-right">Pending</span>
+            <span className="field-label text-right">Accepted</span>
+            <span className="field-label text-right">Rejected</span>
+            <span className="field-label text-right">State</span>
+          </div>
+
           {statuses.map((item) => {
-            const { repository, status, pendingCount, pendingHasMore, message, isPrivate, gated } = item;
+            const { repository, status, pendingCount, pendingHasMore, acceptedCount, rejectedCount, message, isPrivate, gated } = item;
             const repoUrl =
               repository.type === "dataset"
                 ? `https://huggingface.co/datasets/${repository.repoId}`
                 : `https://huggingface.co/${repository.repoId}`;
+            const dash = <span className="text-xs text-muted-foreground/70">—</span>;
 
             return (
               <div
                 key={`${repository.type}:${repository.repoId}`}
-                className="flex flex-col justify-between rounded-lg border bg-card p-5 shadow-sm transition-shadow hover:shadow-md"
+                className={cn(
+                  GRID,
+                  "items-center border-b border-divider px-4 py-3 last:border-b-0",
+                  status === "error" && "bg-destructive/[0.04]",
+                  status === "unsupported" && "opacity-75"
+                )}
               >
-                <div>
-                  <div className="flex items-start justify-between gap-2">
-                    <Badge variant={repository.type} className="uppercase font-mono text-[10px]">
-                      {repository.type}
-                    </Badge>
-
-                    {status === "connected" && (
-                      <Badge variant="success" className="gap-1 text-[11px]">
-                        <CheckCircle2 className="h-3 w-3" />
-                        Connected
-                      </Badge>
-                    )}
-
-                    {status === "unsupported" && (
-                      <Badge variant="warning" className="gap-1 text-[11px]">
-                        <HelpCircle className="h-3 w-3" />
-                        Unsupported
-                      </Badge>
-                    )}
-
-                    {status === "error" && (
-                      <Badge variant="destructive" className="gap-1 text-[11px]">
-                        <AlertCircle className="h-3 w-3" />
-                        Error
-                      </Badge>
-                    )}
-                  </div>
-
-                  <div className="mt-3">
+                <div className="col-span-3 min-w-0 lg:col-span-1">
+                  <div className="flex items-center gap-2.5">
+                    <Badge variant={repository.type}>{repository.type}</Badge>
                     <a
                       href={repoUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="group inline-flex items-center gap-1 font-mono text-sm font-semibold text-foreground hover:text-primary transition-colors truncate max-w-full"
+                      className="group inline-flex min-w-0 items-center gap-1.5 font-mono text-[12.5px] text-foreground hover:text-primary"
                     >
                       <span className="truncate">{repository.repoId}</span>
-                      <ExternalLink className="h-3.5 w-3.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      <ExternalLink
+                        className="h-3 w-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
+                        strokeWidth={1.6}
+                      />
                     </a>
                   </div>
-
-                  {/* Metadata tags */}
-                  <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                    {typeof isPrivate === "boolean" && (
-                      <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground bg-muted/60 rounded px-1.5 py-0.5">
-                        {isPrivate ? <Lock className="h-3 w-3" /> : <Globe className="h-3 w-3" />}
-                        {isPrivate ? "Private" : "Public"}
-                      </span>
-                    )}
-
-                    {gated && (
-                      <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground bg-muted/60 rounded px-1.5 py-0.5">
-                        <Shield className="h-3 w-3" />
-                        Gated ({gated})
-                      </span>
-                    )}
-                  </div>
-
                   {message && (
-                    <div className="mt-3 rounded bg-muted/50 p-2 text-xs text-muted-foreground border border-border/50">
+                    <p
+                      className={cn(
+                        "mt-1 text-[11.5px] leading-[1.4]",
+                        status === "error" ? "text-danger" : "text-muted-foreground"
+                      )}
+                    >
                       {message}
-                    </div>
+                    </p>
                   )}
                 </div>
 
-                {status === "connected" && (
-                  <div className="mt-4 pt-3 border-t flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">Pending Requests:</span>
-                    <span className="font-bold text-foreground font-mono text-sm">
-                      {pendingCount ?? 0}
-                      {pendingHasMore ? "+" : ""}
+                <div className="text-xs text-value">
+                  {typeof isPrivate === "boolean" ? (
+                    <span className="inline-flex items-center gap-1.5">
+                      {isPrivate ? (
+                        <Lock className="h-3 w-3 text-muted-foreground" strokeWidth={1.5} />
+                      ) : (
+                        <Globe className="h-3 w-3 text-muted-foreground" strokeWidth={1.5} />
+                      )}
+                      {isPrivate ? "Private" : "Public"}
                     </span>
-                  </div>
-                )}
+                  ) : (
+                    dash
+                  )}
+                </div>
+
+                <div className="text-xs text-value">{gated ? `Gated (${gated})` : dash}</div>
+
+                <div className="hidden text-right font-mono text-[13px] text-foreground tabular lg:block">
+                  {status === "connected" ? `${pendingCount ?? 0}${pendingHasMore ? "+" : ""}` : dash}
+                </div>
+                <div className="hidden text-right font-mono text-[13px] text-muted-foreground tabular lg:block">
+                  {status === "connected" && acceptedCount !== undefined ? acceptedCount : dash}
+                </div>
+                <div className="hidden text-right font-mono text-[13px] text-muted-foreground tabular lg:block">
+                  {status === "connected" && rejectedCount !== undefined ? rejectedCount : dash}
+                </div>
+
+                <div className="col-span-3 flex items-center justify-between gap-2 lg:col-span-1 lg:justify-end">
+                  <span className="flex items-center gap-2 text-xs lg:hidden">
+                    <span className="field-label">Pending</span>
+                    <span className="font-mono text-[13px] text-foreground tabular">
+                      {status === "connected" ? `${pendingCount ?? 0}${pendingHasMore ? "+" : ""}` : "—"}
+                    </span>
+                  </span>
+
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-2 text-xs",
+                      status === "connected" && "text-success",
+                      status === "error" && "text-danger",
+                      status === "unsupported" && "text-muted-foreground"
+                    )}
+                  >
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "h-1.5 w-1.5 rounded-full",
+                        status === "connected" && "bg-success",
+                        status === "error" && "bg-destructive",
+                        status === "unsupported" && "bg-muted-foreground"
+                      )}
+                    />
+                    {status === "connected" ? "Connected" : status === "error" ? "Error" : "Unsupported"}
+                  </span>
+
+                  {status === "error" && (
+                    <Button variant="outline" size="sm" onClick={fetchStatuses} disabled={isRefreshing}>
+                      Retry
+                    </Button>
+                  )}
+                </div>
               </div>
             );
           })}
         </div>
       )}
 
-      {/* Informational callout */}
-      <div className="rounded-lg border bg-muted/20 p-4 text-xs text-muted-foreground">
-        <p className="font-medium text-foreground mb-1">
-          How to configure managed repositories:
-        </p>
-        <p>
-          Repositories are configured via the{" "}
-          <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">
-            HF_REPOSITORIES
-          </code>{" "}
-          environment variable as comma-separated entries in format{" "}
-          <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">
-            &lt;repo-type&gt;:&lt;owner&gt;/&lt;repo-name&gt;
-          </code>
-          . To add or modify repositories, update your environment configuration and restart the application.
-        </p>
-      </div>
+      <p className="text-[11.5px] leading-[1.5] text-muted-foreground">
+        Repositories are declared as comma-separated{" "}
+        <code className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-value">
+          &lt;repo-type&gt;:&lt;owner&gt;/&lt;repo-name&gt;
+        </code>{" "}
+        entries. Changing the list means changing the environment and restarting the app.
+      </p>
     </div>
   );
 }

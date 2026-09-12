@@ -3,22 +3,21 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const badgeVariants = cva(
-  "inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+  "inline-flex items-center rounded-sm border transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
   {
     variants: {
       variant: {
-        default:
-          "border-transparent bg-primary text-primary-foreground shadow hover:bg-primary/80",
-        secondary:
-          "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        destructive:
-          "border-transparent bg-destructive text-destructive-foreground shadow hover:bg-destructive/80",
-        outline: "text-foreground",
-        model: "border-purple-200 bg-purple-50 text-purple-700 dark:border-purple-900/50 dark:bg-purple-950/50 dark:text-purple-300",
-        dataset: "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/50 dark:text-blue-300",
-        space: "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/50 dark:text-amber-300",
-        success: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/50 dark:text-emerald-300",
-        warning: "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/50 dark:text-amber-300",
+        default: "border-transparent bg-primary px-2 py-0.5 text-xs font-semibold text-primary-foreground",
+        secondary: "border-transparent bg-secondary px-2 py-0.5 text-xs font-semibold text-secondary-foreground",
+        destructive: "border-transparent bg-destructive px-2 py-0.5 text-xs font-semibold text-destructive-foreground",
+        outline: "px-2 py-0.5 text-xs font-semibold text-foreground",
+        /* Repository kinds and request states: one hue, tinted for the ground. */
+        model: "h-[18px] border-model/25 bg-model/[0.12] px-[7px] font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-model",
+        dataset: "h-[18px] border-dataset/25 bg-dataset/[0.12] px-[7px] font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-dataset",
+        space: "h-[18px] border-space/25 bg-space/[0.12] px-[7px] font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-space",
+        success: "h-[18px] border-success/30 bg-success/[0.12] px-[7px] font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-success",
+        rejected: "h-[18px] border-danger/30 bg-danger/[0.12] px-[7px] font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-danger",
+        warning: "h-[18px] border-warning/30 bg-warning/[0.12] px-[7px] text-[10.5px] font-medium text-warning-soft",
       },
     },
     defaultVariants: {
@@ -32,9 +31,7 @@ export interface BadgeProps
     VariantProps<typeof badgeVariants> {}
 
 function Badge({ className, variant, ...props }: BadgeProps) {
-  return (
-    <div className={cn(badgeVariants({ variant }), className)} {...props} />
-  );
+  return <div className={cn(badgeVariants({ variant }), className)} {...props} />;
 }
 
 export { Badge, badgeVariants };

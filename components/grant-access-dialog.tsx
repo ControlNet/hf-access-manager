@@ -81,8 +81,8 @@ export function GrantAccessDialog({ repositories, onGrant, disabled }: GrantAcce
   return (
     <Dialog open={open} onOpenChange={value => { if (!isSubmitting) setOpen(value); }}>
       <DialogTrigger asChild>
-        <Button disabled={disabled || eligibleRepos.length === 0} size="sm" className="gap-1.5 font-medium shadow-sm">
-          <UserPlus className="h-4 w-4" />
+        <Button disabled={disabled || eligibleRepos.length === 0} size="sm" className="gap-1.5">
+          <UserPlus className="h-3.5 w-3.5" strokeWidth={1.7} />
           <span>Grant Access</span>
         </Button>
       </DialogTrigger>
@@ -98,13 +98,13 @@ export function GrantAccessDialog({ repositories, onGrant, disabled }: GrantAcce
 
           <div className="space-y-4 py-4">
             {errorMessage && (
-              <div className="rounded-md bg-destructive/10 p-3 text-xs text-destructive border border-destructive/20">
+              <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/[0.06] p-2.5 text-xs leading-[1.45] text-danger">
                 {errorMessage}
               </div>
             )}
 
             <div className="space-y-1.5">
-              <label htmlFor="repository-select" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              <label htmlFor="repository-select" className="field-label">
                 Repository
               </label>
               <select
@@ -112,7 +112,7 @@ export function GrantAccessDialog({ repositories, onGrant, disabled }: GrantAcce
                 value={selectedRepoKey}
                 onChange={(e) => setSelectedRepoKey(e.target.value)}
                 disabled={isSubmitting}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                className="h-9 w-full rounded-md border border-input bg-muted px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               >
                 {eligibleRepos.map((repo) => (
                   <option
@@ -126,11 +126,12 @@ export function GrantAccessDialog({ repositories, onGrant, disabled }: GrantAcce
             </div>
 
             <div className="space-y-1.5">
-              <label htmlFor="hf-username" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              <label htmlFor="hf-username" className="field-label">
                 Hugging Face Username
               </label>
               <Input
                 id="hf-username"
+                className="bg-muted font-mono"
                 placeholder="e.g. alice-ai"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}

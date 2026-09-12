@@ -2,67 +2,111 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Palette: cool neutral greys carrying the structure, one indigo accent for
+ * anything actionable, and semantic colours reserved for decisions (approve,
+ * reject, degraded). Both themes are authored, not inverted — borders, badge
+ * tints and shadows are picked per ground.
+ */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --background: 216 29.4% 96.7%;
+    --foreground: 215.3 30.9% 10.8%;
 
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 215.3 30.9% 10.8%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
+    --popover-foreground: 215.3 30.9% 10.8%;
 
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
+    --primary: 224.4 66.9% 53.7%;
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 216 29.4% 93.3%;
+    --secondary-foreground: 215 35.3% 6.7%;
 
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    --muted: 210 25% 98.4%;
+    --muted-foreground: 218.6 13.2% 41.6%;
 
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --accent: 214.3 28% 95.1%;
+    --accent-foreground: 215 35.3% 6.7%;
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 354.3 61% 47.3%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
+    --border: 212.7 23.4% 90.8%;
+    --input: 214.3 21.2% 87.1%;
+    --ring: 224.4 66.9% 53.7%;
 
-    --radius: 0.5rem;
+    /* Row separators sit a step lighter than panel borders. */
+    --divider: 210 20% 94.1%;
+    /* Micro-labels above every form answer. */
+    --label: 216.9 11.7% 43.5%;
+    /* Form answers, and the prose of a long answer. */
+    --value: 215.5 20.4% 21.2%;
+    --prose: 215 14% 33.7%;
+    --selected: 222.4 89.5% 96.3%;
+
+    --success: 152.4 68.1% 28.2%;
+    --success-foreground: 0 0% 100%;
+    --danger: 353 57.1% 43.9%;
+    --warning: 38.3 76.8% 38.8%;
+    --warning-foreground: 0 0% 100%;
+    --warning-soft: 39.2 73.7% 26.9%;
+
+    /* Repository kinds: one hue each, tinted for chips at low alpha. */
+    --model: 256.2 41.6% 51%;
+    --dataset: 208.2 67.2% 34.7%;
+    --space: 37.1 63.6% 32.4%;
+
+    --radius: 0.375rem;
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
+    --background: 214.3 21.2% 6.5%;
+    --foreground: 216 25% 92.2%;
 
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
+    --card: 213.3 20.9% 8.4%;
+    --card-foreground: 216 25% 92.2%;
 
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
+    --popover: 212.3 24.5% 10.4%;
+    --popover-foreground: 216 25% 92.2%;
 
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
+    --primary: 222.1 100% 67.8%;
+    --primary-foreground: 218.2 57.9% 7.5%;
 
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
+    --secondary: 213.8 21.6% 14.5%;
+    --secondary-foreground: 213.3 36% 95.1%;
 
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
+    --muted: 213.3 23.1% 7.6%;
+    --muted-foreground: 216 12% 59%;
 
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
+    --accent: 213.8 22.9% 13.7%;
+    --accent-foreground: 213.3 36% 95.1%;
 
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 355 60% 47.1%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
+    --border: 214.3 18.9% 14.5%;
+    --input: 213.8 19% 16.5%;
+    --ring: 222.1 100% 67.8%;
+
+    --divider: 214.3 22.6% 12.2%;
+    --label: 215 10.3% 54.1%;
+    --value: 213 21.3% 81.6%;
+    --prose: 212.7 14.9% 71%;
+    --selected: 213.8 27.6% 11.4%;
+
+    --success: 149.5 56.5% 42.4%;
+    --success-foreground: 150 46.2% 5.1%;
+    --danger: 353.8 53% 64.1%;
+    --warning: 39.1 66.7% 55.3%;
+    --warning-foreground: 214.3 21.2% 6.5%;
+    --warning-soft: 37.7 58.1% 71%;
+
+    --model: 251.2 100% 83.1%;
+    --dataset: 208.2 81.6% 72.4%;
+    --space: 37.5 65.9% 64.3%;
   }
 }
 
@@ -73,5 +117,16 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  /* Counts, ids and timestamps line up column-wise. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  /* The 10px uppercase caption that names every form answer. */
+  .field-label {
+    @apply font-mono text-[10px] font-medium uppercase tracking-[0.1em] text-label;
   }
 }

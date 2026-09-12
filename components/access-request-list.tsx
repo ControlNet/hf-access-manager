@@ -2,10 +2,13 @@
 
 import * as React from "react";
 import {
+  CircleAlert,
+  Filter,
   Inbox,
-  AlertTriangle,
-  Sparkles,
   Loader2,
+  PackageCheck,
+  RefreshCw,
+  TriangleAlert,
 } from "lucide-react";
 import { AccessRequest, ManagedRepository, RequestStatus } from "@/lib/types";
 import {
@@ -24,7 +27,6 @@ import {
 } from "@/lib/pagination";
 import { shouldUpdateRefreshTimestamp } from "@/lib/refresh";
 import { AccessRequestRow } from "./access-request-row";
-import { AccessRequestDetails } from "./access-request-details";
 import { BulkActionsBar } from "./bulk-actions-bar";
 import { RepositoryFilter } from "./repository-filter";
 import { GrantAccessDialog } from "./grant-access-dialog";
@@ -32,8 +34,15 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import Link from "next/link";
+
+const TAB_LABEL: Record<RequestStatus, string> = {
+  pending: "Pending",
+  accepted: "Accepted",
+  rejected: "Rejected",
+};
 
 interface AccessRequestListProps {
   configuredRepositories: ManagedRepository[];
@@ -70,10 +79,6 @@ export function AccessRequestList({
 
   // Selected request IDs for bulk actions
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
-
-  // Request details sheet state
-  const [selectedRequest, setSelectedRequest] = React.useState<AccessRequest | null>(null);
-  const [isDetailsOpen, setIsDetailsOpen] = React.useState(false);
 
   // Mutation loading states
   const [isMutating, setIsMutating] = React.useState(false);
@@ -158,7 +163,6 @@ export function AccessRequestList({
         if (!data.errors.length && pagesLimit) setCurrentMaxPages(pagesLimit);
         const fetchedList: AccessRequest[] = data.requests;
         setRequests(fetchedList);
-        setSelectedRequest(previous => previous ? fetchedList.find(item => item.id === previous.id) || previous : null);
         setRepoErrors(data.errors || []);
         setHasMore(Boolean(data.hasMore));
 
@@ -267,7 +271,6 @@ export function AccessRequestList({
     setRequests([]);
     setRepoErrors([]);
     setLoadError(null);
-    setIsDetailsOpen(false);
     setCurrentTab(newStatus);
     setSelectedIds(new Set());
     setHasMore(false);
@@ -476,77 +479,114 @@ export function AccessRequestList({
   const busy = isMutating || isBulkProcessing || isLoading || isLoadingMore;
   const actionsDisabled = busy || !!loadError;
 
+  const hasActiveFilters = searchQuery !== "" || selectedRepoKey !== "all" || selectedType !== "all";
+  const windowIsIncomplete = Boolean(loadError) || repoErrors.length > 0 || hasMore;
+  // With no rows the empty state carries the action; a footer here would duplicate it.
+  const showFooter = !isLoading && requests.length > 0;
+
   return (
-    <div className="space-y-4">
-      {loadError && <div role="alert" className="rounded-lg border border-destructive p-3 text-sm">
-        {loadError} <Button variant="outline" size="sm" disabled={busy} onClick={() => fetchTabRequests(currentTab, currentMaxPages)}>Retry</Button>
-      </div>}
-      {(loadError || repoErrors.length > 0) && <div className="flex gap-2">
-        <Button variant="outline" size="sm" disabled={busy} onClick={() => fetchTabRequests(currentTab, currentMaxPages)}>Retry repositories</Button>
-        {currentMaxPages > 1 && <Button variant="outline" size="sm" disabled={busy} onClick={() => fetchTabRequests(currentTab, Math.max(1, Math.floor(currentMaxPages / 2)))}>Load smaller window</Button>}
-      </div>}
-      {/* Partial Repository Failure Alert */}
-      {repoErrors.length > 0 && (
-        <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
-          <div className="flex items-center space-x-2">
-            <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-            <span>
-              {repoErrors.length === 1
-                ? `1 repository could not be loaded (${repoErrors[0].repo.repoId}). Loaded repositories remain available; counts are incomplete.`
-                : `${repoErrors.length} repositories could not be loaded. Loaded repositories remain available; counts are incomplete.`}
+    <div className="space-y-3">
+      {/* A failed read is never allowed to read as an empty queue. */}
+      {loadError && (
+        <div
+          role="alert"
+          className="flex flex-col gap-2 rounded-lg border border-destructive/40 bg-destructive/[0.06] p-3 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div className="flex items-start gap-2.5">
+            <CircleAlert className="mt-px h-4 w-4 shrink-0 text-destructive" strokeWidth={1.6} />
+            <span className="text-[12.5px] leading-[1.45] text-danger">
+              {loadError} Anything still on screen is from the last successful sync and may be stale.
             </span>
           </div>
-          <Link
-            href="/repositories"
-            className="font-medium underline hover:text-amber-950 dark:hover:text-amber-200"
-          >
-            View details
-          </Link>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              onClick={() => fetchTabRequests(currentTab, currentMaxPages)}
+            >
+              Retry
+            </Button>
+            {currentMaxPages > 1 && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy}
+                onClick={() => fetchTabRequests(currentTab, Math.max(1, Math.floor(currentMaxPages / 2)))}
+              >
+                Load a smaller window
+              </Button>
+            )}
+          </div>
         </div>
       )}
 
-      {/* Top Header Controls: Tabs + Grant Access */}
+      {/* Partial repository failure: what still works, and what is missing. */}
+      {repoErrors.length > 0 && (
+        <div className="flex flex-col gap-2 rounded-lg border border-warning/40 bg-warning/[0.07] p-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-2.5">
+            <TriangleAlert className="mt-px h-4 w-4 shrink-0 text-warning" strokeWidth={1.6} />
+            <span className="text-[12.5px] leading-[1.45] text-warning-soft">
+              {repoErrors.length === 1 ? (
+                <>
+                  1 repository could not be loaded (
+                  <span className="font-mono text-xs">{repoErrors[0].repo.repoId}</span>). The rest are live
+                  below — counts on this screen are incomplete.
+                </>
+              ) : (
+                <>
+                  {repoErrors.length} repositories could not be loaded. The rest are live below — counts on
+                  this screen are incomplete.
+                </>
+              )}
+            </span>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              onClick={() => fetchTabRequests(currentTab, currentMaxPages)}
+            >
+              Retry repositories
+            </Button>
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/repositories">See diagnostics</Link>
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Tabs + direct grant. */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <Tabs value={currentTab} onValueChange={handleTabChange} className="w-full sm:w-auto">
-          <TabsList className="grid w-full grid-cols-3 sm:w-auto">
-            <TabsTrigger disabled={isMutating} value="pending" className="gap-2 text-xs sm:text-sm">
-              <span>Pending</span>
-              {tabCounts.pending !== undefined && (
-                <Badge
-                  variant={tabCounts.pending.count > 0 ? "default" : "secondary"}
-                  className="px-1.5 py-0 text-[11px] font-mono h-4 min-w-4 flex items-center justify-center rounded-full"
+          <TabsList className="grid h-auto w-full grid-cols-3 gap-0.5 rounded-lg border bg-muted p-[3px] sm:w-auto">
+            {(["pending", "accepted", "rejected"] as const).map((status) => {
+              const counts = tabCounts[status];
+              return (
+                <TabsTrigger
+                  key={status}
+                  disabled={isMutating}
+                  value={status}
+                  className="h-7 gap-2 rounded-md px-3 text-xs text-muted-foreground data-[state=active]:bg-secondary data-[state=active]:font-semibold data-[state=active]:text-foreground data-[state=active]:shadow-none sm:text-[12.5px]"
                 >
-                  {tabCounts.pending.count}
-                  {tabCounts.pending.isTruncated ? "+" : ""}
-                </Badge>
-              )}
-            </TabsTrigger>
-
-            <TabsTrigger disabled={isMutating} value="accepted" className="gap-2 text-xs sm:text-sm">
-              <span>Accepted</span>
-              {tabCounts.accepted !== undefined && (
-                <Badge
-                  variant="secondary"
-                  className="px-1.5 py-0 text-[11px] font-mono h-4 min-w-4 flex items-center justify-center rounded-full"
-                >
-                  {tabCounts.accepted.count}
-                  {tabCounts.accepted.isTruncated ? "+" : ""}
-                </Badge>
-              )}
-            </TabsTrigger>
-
-            <TabsTrigger disabled={isMutating} value="rejected" className="gap-2 text-xs sm:text-sm">
-              <span>Rejected</span>
-              {tabCounts.rejected !== undefined && (
-                <Badge
-                  variant="secondary"
-                  className="px-1.5 py-0 text-[11px] font-mono h-4 min-w-4 flex items-center justify-center rounded-full"
-                >
-                  {tabCounts.rejected.count}
-                  {tabCounts.rejected.isTruncated ? "+" : ""}
-                </Badge>
-              )}
-            </TabsTrigger>
+                  <span>{TAB_LABEL[status]}</span>
+                  {counts !== undefined && (
+                    <span
+                      className={cn(
+                        "flex h-4 min-w-4 items-center justify-center rounded-full px-1.5 font-mono text-[10.5px] tabular",
+                        status === "pending" && counts.count > 0
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-accent text-muted-foreground"
+                      )}
+                    >
+                      {counts.count}
+                      {counts.isTruncated ? "+" : ""}
+                    </span>
+                  )}
+                </TabsTrigger>
+              );
+            })}
           </TabsList>
         </Tabs>
 
@@ -559,7 +599,6 @@ export function AccessRequestList({
         </div>
       </div>
 
-      {/* Filter Bar */}
       <RepositoryFilter
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
@@ -573,64 +612,120 @@ export function AccessRequestList({
         showPendingCounts={currentTab === "pending"}
       />
 
-      {/* Requests Table / List Container */}
-      <div className="rounded-lg border bg-card shadow-sm overflow-hidden">
+      <div className="overflow-hidden rounded-lg border bg-card">
+        {/* Column captions for the row grid below. */}
+        <div className="hidden h-8 grid-cols-[26px_minmax(0,1fr)_226px_92px_172px] items-center gap-4 border-b bg-muted px-4 lg:grid">
+          <span />
+          <span className="field-label">Requester &amp; form answers</span>
+          <span className="field-label">Repository</span>
+          <span className="field-label">Requested</span>
+          <span className="field-label text-right">Review</span>
+        </div>
+
         {isLoading ? (
-          <div className="divide-y">
+          <div aria-busy="true" aria-label="Loading requests">
             {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="flex items-center space-x-4 p-4">
-                <Skeleton className="h-4 w-4 rounded" />
-                <div className="space-y-2 flex-1">
-                  <Skeleton className="h-4 w-1/4" />
-                  <Skeleton className="h-3 w-1/3" />
+              <div
+                key={i}
+                className="grid grid-cols-[26px_minmax(0,1fr)_172px] items-start gap-4 border-b border-divider p-4 last:border-b-0"
+                style={{ opacity: 1 - i * 0.15 }}
+              >
+                <Skeleton className="mt-0.5 h-3.5 w-3.5 rounded-sm" />
+                <div className="space-y-2">
+                  <Skeleton className="h-3.5 w-1/3" />
+                  <div className="flex gap-5">
+                    <Skeleton className="h-5 w-1/5" />
+                    <Skeleton className="h-5 w-1/5" />
+                    <Skeleton className="h-5 w-1/5" />
+                    <Skeleton className="h-5 w-1/5" />
+                  </div>
+                  <Skeleton className="h-3 w-4/5" />
                 </div>
-                <Skeleton className="h-8 w-16" />
-                <Skeleton className="h-8 w-16" />
+                <div className="flex justify-end gap-2">
+                  <Skeleton className="h-[30px] w-[72px] rounded-md" />
+                  <Skeleton className="h-[30px] w-[82px] rounded-md" />
+                </div>
               </div>
             ))}
           </div>
         ) : filteredRequests.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
-            {loadError || repoErrors.length > 0 || hasMore ? (
-              <><Inbox className="h-10 w-10 text-muted-foreground/50 mb-3" /><h3>No requests in the current window</h3><p className="text-xs text-muted-foreground">Results are incomplete. Retry loading or expand the window before concluding the inbox is empty.</p></>
-            ) : searchQuery || selectedRepoKey !== "all" || selectedType !== "all" ? (
+          <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
+            {windowIsIncomplete ? (
               <>
-                <Inbox className="h-10 w-10 text-muted-foreground/50 mb-3" />
-                <h3 className="font-semibold text-base text-foreground">No matching requests</h3>
-                <p className="text-xs text-muted-foreground mt-1 max-w-sm">
-                  No {currentTab} requests matched your current filter criteria.
-                </p>
+                <RefreshCw className="h-8 w-8 text-warning" strokeWidth={1.2} />
+                <div>
+                  <h3 className="text-[15px] font-semibold text-foreground">
+                    Nothing in the window we loaded
+                  </h3>
+                  <p className="mx-auto mt-1.5 max-w-sm text-[12.5px] leading-[1.5] text-muted-foreground">
+                    Results are incomplete — the Hub reports more than we fetched, or a repository failed.
+                    Widen the window before treating this queue as cleared.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  {hasMore &&
+                    (isPaginationAtHardCap(currentMaxPages, ABSOLUTE_MAX_PAGES) ? (
+                      <span className="font-mono text-[11px] text-label">
+                        Display limit reached · more requests exist on the Hub
+                      </span>
+                    ) : (
+                      <Button size="sm" disabled={busy} onClick={handleLoadMore}>
+                        Load more requests
+                      </Button>
+                    ))}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => fetchTabRequests(currentTab, currentMaxPages)}
+                  >
+                    Check again
+                  </Button>
+                </div>
+              </>
+            ) : hasActiveFilters ? (
+              <>
+                <Filter className="h-8 w-8 text-muted-foreground/50" strokeWidth={1.2} />
+                <div>
+                  <h3 className="text-[15px] font-semibold text-foreground">
+                    No request matches these filters
+                  </h3>
+                  <p className="mx-auto mt-1.5 max-w-sm text-[12.5px] leading-[1.5] text-muted-foreground">
+                    {requests.length} {currentTab} {requests.length === 1 ? "request is" : "requests are"}{" "}
+                    loaded; none of them matches the current filters.
+                  </p>
+                </div>
               </>
             ) : currentTab === "pending" ? (
               <>
-                <Sparkles className="h-10 w-10 text-emerald-500 mb-3" />
-                <h3 className="font-semibold text-base text-foreground">Inbox zero!</h3>
-                <p className="text-xs text-muted-foreground mt-1 max-w-sm">
-                  There are currently no pending access requests waiting for review.
-                </p>
+                <PackageCheck className="h-8 w-8 text-success" strokeWidth={1.2} />
+                <div>
+                  <h3 className="text-[15px] font-semibold text-foreground">Nothing waiting</h3>
+                  <p className="mx-auto mt-1.5 max-w-sm text-[12.5px] leading-[1.5] text-muted-foreground">
+                    Every configured repository answered and none of them has a pending request.
+                  </p>
+                </div>
               </>
             ) : (
               <>
-                <Inbox className="h-10 w-10 text-muted-foreground/50 mb-3" />
-                <h3 className="font-semibold text-base text-foreground">No {currentTab} requests</h3>
-                <p className="text-xs text-muted-foreground mt-1 max-w-sm">
-                  There are no {currentTab} requests recorded for the configured repositories.
-                </p>
+                <Inbox className="h-8 w-8 text-muted-foreground/50" strokeWidth={1.2} />
+                <div>
+                  <h3 className="text-[15px] font-semibold text-foreground">No {currentTab} requests</h3>
+                  <p className="mx-auto mt-1.5 max-w-sm text-[12.5px] leading-[1.5] text-muted-foreground">
+                    There are no {currentTab} requests recorded for the configured repositories.
+                  </p>
+                </div>
               </>
             )}
           </div>
         ) : (
-          <div className="divide-y divide-border/60">
+          <div>
             {filteredRequests.map((req) => (
               <AccessRequestRow
                 key={req.id}
                 request={req}
                 isSelected={selectedIds.has(req.id)}
                 onToggleSelect={handleToggleSelect}
-                onViewDetails={(r) => {
-                  setSelectedRequest(r);
-                  setIsDetailsOpen(true);
-                }}
                 onApprove={handleApprove}
                 onReject={handleReject}
                 onRevoke={handleRevoke}
@@ -640,44 +735,40 @@ export function AccessRequestList({
           </div>
         )}
 
-        {/* Truncation / Load More Indicator */}
-        {shouldDisplayPaginationFooter(isLoading, hasMore) && (
-          <div className="flex flex-col sm:flex-row items-center justify-between border-t bg-muted/20 px-4 py-3 text-xs text-muted-foreground gap-2">
-            {isPaginationAtHardCap(currentMaxPages, ABSOLUTE_MAX_PAGES) ? (
-              <div className="flex w-full items-center justify-between gap-2">
-                <span>Showing first {requests.length}+ requests.</span>
-                <span className="font-medium text-muted-foreground/90">
-                  Display limit reached · More requests exist on Hugging Face Hub
+        {showFooter && (
+          <div className="flex flex-col items-center justify-between gap-2 border-t bg-muted px-4 py-2.5 text-[11.5px] text-muted-foreground sm:flex-row">
+            <span>
+              Showing {filteredRequests.length}
+              {hasMore ? "+" : ""} of {requests.length}
+              {hasMore ? "+" : ""} loaded {currentTab} {requests.length === 1 ? "request" : "requests"}.
+            </span>
+
+            {shouldDisplayPaginationFooter(isLoading, hasMore) &&
+              (isPaginationAtHardCap(currentMaxPages, ABSOLUTE_MAX_PAGES) ? (
+                <span className="font-mono text-[11px] text-label">
+                  Display limit reached · more requests exist on the Hub
                 </span>
-              </div>
-            ) : (
-              <>
-                <span>
-                  Showing first {requests.length}+ requests (more {currentTab} requests are available on Hugging Face Hub).
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleLoadMore}
-                  disabled={busy}
-                  className="h-7 text-xs"
-                >
-                  {isLoadingMore ? (
-                    <>
-                      <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
-                      Loading...
-                    </>
-                  ) : (
-                    "Load more requests"
-                  )}
-                </Button>
-              </>
-            )}
+              ) : (
+                <div className="flex items-center gap-3">
+                  <span className="font-mono text-[11px] text-label">
+                    page window {currentMaxPages} · hub has more
+                  </span>
+                  <Button variant="outline" size="sm" onClick={handleLoadMore} disabled={busy}>
+                    {isLoadingMore ? (
+                      <>
+                        <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                        Loading...
+                      </>
+                    ) : (
+                      "Load more requests"
+                    )}
+                  </Button>
+                </div>
+              ))}
           </div>
         )}
       </div>
 
-      {/* Bulk Actions Floating Bar (only in Pending tab) */}
       {currentTab === "pending" && (
         <BulkActionsBar
           selectedCount={selectedIds.size}
@@ -690,18 +781,6 @@ export function AccessRequestList({
           actionInProgress={bulkActionInProgress}
         />
       )}
-
-      {/* Detailed Sheet Modal */}
-      <AccessRequestDetails
-        request={selectedRequest}
-        open={isDetailsOpen}
-        onOpenChange={setIsDetailsOpen}
-        onApprove={handleApprove}
-        onReject={handleReject}
-        onRevoke={handleRevoke}
-        isMutating={actionsDisabled || !requests.some(item => item.id === selectedRequest?.id)}
-        stale={Boolean(selectedRequest && !requests.some(item => item.id === selectedRequest.id))}
-      />
     </div>
   );
 }

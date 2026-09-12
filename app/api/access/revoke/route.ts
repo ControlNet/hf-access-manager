@@ -3,18 +3,14 @@ import { getEnv } from "@/lib/env";
 import { revokeRequest } from "@/lib/huggingface";
 import { findManagedRepo } from "@/lib/repositories";
 import { singleMutationSchema } from "@/lib/validations";
-import { validateMutationOrigin } from "@/lib/csrf";
+import { authorizeApiRequest, readJsonRequest } from "@/lib/api-security";
 
 export async function POST(request: NextRequest) {
-  if (!validateMutationOrigin(request)) {
-    return NextResponse.json(
-      { error: { code: "CSRF_ERROR", message: "Invalid request origin" } },
-      { status: 403 }
-    );
-  }
+  const denied = await authorizeApiRequest(request, true);
+  if (denied) return denied;
 
   try {
-    const body = await request.json();
+    const body = await readJsonRequest(request);
     const { hfRepositories } = getEnv();
 
     const parsed = singleMutationSchema.safeParse(body);
@@ -45,7 +41,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    await revokeRequest(matchedRepo, username);
+    await revokeRequest(matchedRepo, username, { signal: request.signal });
 
     return NextResponse.json({
       data: {

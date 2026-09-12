@@ -36,6 +36,7 @@ export async function verifyTokenWithSecrets(
     const key = await deriveSessionKey(authSecret, appPassword);
     const { payload } = await jwtVerify(token, key, {
       algorithms: ["HS256"],
+      requiredClaims: ["exp", "iat"],
     });
 
     return payload.authenticated === true;

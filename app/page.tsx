@@ -1,9 +1,11 @@
 import { getEnv } from "@/lib/env";
 import { DashboardClient } from "./dashboard-client";
+import { requirePageSession } from "@/lib/page-auth";
 
 export const dynamic = "force-dynamic";
 
-export default function HomePage() {
+export default async function HomePage() {
+  await requirePageSession();
   const { hfRepositories } = getEnv();
 
   // Strip anything except type and repoId to ensure zero leak of internal configs

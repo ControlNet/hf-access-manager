@@ -1,13 +1,16 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { authorizeApiRequest } from "@/lib/api-security";
 import { getEnv } from "@/lib/env";
 import { aggregateRepositoriesStatus } from "@/lib/access";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const denied = await authorizeApiRequest(request);
+  if (denied) return denied;
   try {
     const { hfRepositories } = getEnv();
-    const statuses = await aggregateRepositoriesStatus(hfRepositories);
+    const statuses = await aggregateRepositoriesStatus(hfRepositories, { signal: request.signal });
 
     return NextResponse.json({
       data: statuses,

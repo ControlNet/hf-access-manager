@@ -8,15 +8,25 @@ export function validateMutationOrigin(request: NextRequest): boolean {
   // In non-browser environments or tests, Origin/Referer might not be sent.
   // In production browsers, state-changing POST requests always include Origin or Referer.
   const origin = request.headers.get("origin");
-  const host = request.headers.get("x-forwarded-host") || request.headers.get("host");
+  const host = request.headers.get("host");
+  const matches = (value: string) => {
+    const actual = new URL(value);
+    if (!["http:", "https:"].includes(actual.protocol) || actual.username || actual.password) return false;
+    if (process.env.APP_ORIGIN) {
+      const expected = new URL(process.env.APP_ORIGIN);
+      if (expected.pathname !== "/" || expected.search || expected.hash || expected.username || expected.password) return false;
+      return actual.origin === expected.origin;
+    }
+    const protocol = process.env.NODE_ENV === "production" ? "https:" : request.nextUrl.protocol;
+    return actual.origin === `${protocol}//${host}`;
+  };
 
   if (!origin || !host) {
     // If no origin header is present, allow only in development/test or check referer
     const referer = request.headers.get("referer");
     if (referer && host) {
       try {
-        const refererHost = new URL(referer).host;
-        return refererHost === host;
+        return matches(referer);
       } catch {
         return false;
       }
@@ -26,8 +36,7 @@ export function validateMutationOrigin(request: NextRequest): boolean {
   }
 
   try {
-    const originHost = new URL(origin).host;
-    return originHost === host;
+    return matches(origin);
   } catch {
     return false;
   }

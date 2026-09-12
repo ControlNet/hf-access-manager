@@ -15,11 +15,7 @@ FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Dummy environment variables for standalone build step (actual secrets injected at runtime)
-ENV HF_TOKEN="build-time-dummy"
-ENV HF_REPOSITORIES="model:dummy/build-model"
-ENV APP_PASSWORD="build-time-dummy-password"
-ENV AUTH_SECRET="build-time-dummy-secret-key-at-least-32-chars"
+# Configuration is read at runtime; no credentials are needed during the build.
 ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN npm run build
@@ -39,6 +35,7 @@ RUN addgroup --system --gid 1001 nodejs && \
 
 # Copy standalone build and static files
 COPY --from=builder /app/public ./public
+COPY --from=builder /app/LICENSE ./LICENSE
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 

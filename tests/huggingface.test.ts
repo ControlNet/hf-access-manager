@@ -67,7 +67,7 @@ describe("lib/huggingface", () => {
         intendedUsage: "Academic research on vision-language models",
         country: "Australia",
       });
-      expect(normalized.raw).toEqual(rawItem);
+      expect(normalized).not.toHaveProperty("raw");
     });
 
     it("handles request with string user and empty fields gracefully", () => {

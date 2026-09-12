@@ -12,7 +12,8 @@ const envSchema = z.object({
     .min(1, "HF_REPOSITORIES must be provided"),
   APP_PASSWORD: z
     .string({ required_error: "APP_PASSWORD must be provided" })
-    .min(16, "APP_PASSWORD must be at least 16 characters long"),
+    .min(16, "APP_PASSWORD must be at least 16 characters long")
+    .max(1024, "APP_PASSWORD must not exceed 1024 characters"),
   AUTH_SECRET: z
     .string({ required_error: "AUTH_SECRET must be provided" })
     .min(32, "AUTH_SECRET must be at least 32 characters long"),
@@ -21,9 +22,9 @@ const envSchema = z.object({
     .optional()
     .transform((val) => {
       if (!val) return 604800; // 7 days in seconds
-      const parsed = parseInt(val, 10);
-      if (isNaN(parsed) || parsed <= 0) {
-        throw new Error("SESSION_MAX_AGE must be a positive integer in seconds.");
+      const parsed = Number(val);
+      if (!/^\d+$/.test(val) || !Number.isSafeInteger(parsed) || parsed <= 0 || parsed > 31536000) {
+        throw new Error("SESSION_MAX_AGE must be an integer between 1 and 31536000 seconds.");
       }
       return parsed;
     }),

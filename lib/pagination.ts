@@ -9,8 +9,9 @@ export function clampMaxPages(maxPagesParam: string | null | undefined): number 
   if (maxPagesParam === null || maxPagesParam === undefined || maxPagesParam.trim() === "") {
     return undefined;
   }
-  const parsed = parseInt(maxPagesParam, 10);
-  if (isNaN(parsed)) {
+  if (!/^-?\d+$/.test(maxPagesParam.trim())) return undefined;
+  const parsed = Number(maxPagesParam);
+  if (!Number.isFinite(parsed)) {
     return undefined;
   }
   if (parsed < 1) {

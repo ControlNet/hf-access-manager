@@ -13,9 +13,9 @@ interface AccessRequestRowProps {
   isSelected?: boolean;
   onToggleSelect?: (id: string) => void;
   onViewDetails: (request: AccessRequest) => void;
-  onApprove: (request: AccessRequest) => Promise<void>;
-  onReject: (request: AccessRequest) => Promise<void>;
-  onRevoke: (request: AccessRequest) => Promise<void>;
+  onApprove: (request: AccessRequest) => Promise<boolean>;
+  onReject: (request: AccessRequest) => Promise<boolean>;
+  onRevoke: (request: AccessRequest) => Promise<boolean>;
   isMutating?: boolean;
 }
 

@@ -55,7 +55,15 @@ export function AccessRequestList({
   const [isLoading, setIsLoading] = React.useState(true);
   const [isLoadingMore, setIsLoadingMore] = React.useState(false);
   const [hasMore, setHasMore] = React.useState(false);
-  const [currentMaxPages, setCurrentMaxPages] = React.useState<number>(10);
+  const [currentMaxPages, setCurrentMaxPages] = React.useState(initialStatus === "pending" ? 50 : 10);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
+  const mutationLock = React.useRef(false);
+  const readingRef = React.useRef(true);
+  const mountedRef = React.useRef(true);
+  const currentTabRef = React.useRef(currentTab);
+  currentTabRef.current = currentTab;
+  const pagesRef = React.useRef(currentMaxPages);
+  pagesRef.current = currentMaxPages;
   const [repoErrors, setRepoErrors] = React.useState<
     Array<{ repo: ManagedRepository; error: string; code?: string }>
   >([]);
@@ -99,7 +107,11 @@ export function AccessRequestList({
 
   // Fetch requests for active tab with AbortController race prevention
   const fetchTabRequests = React.useCallback(
-    async (statusToFetch: RequestStatus, pagesLimit?: number, isAppending = false) => {
+    async (statusToFetch: RequestStatus, pagesLimit?: number, isAppending = false, reconcile = false) => {
+      if (!mountedRef.current || (mutationLock.current && !reconcile)) return false;
+      if (statusToFetch !== currentTabRef.current) return false;
+      readingRef.current = true;
+      setLoadError(null);
       // Abort any pending active fetch
       if (activeAbortControllerRef.current) {
         activeAbortControllerRef.current.abort();
@@ -113,7 +125,6 @@ export function AccessRequestList({
           setIsLoadingMore(true);
         } else {
           setIsLoading(true);
-          setHasMore(false);
         }
 
         const queryParams = new URLSearchParams({ status: statusToFetch });
@@ -123,7 +134,7 @@ export function AccessRequestList({
 
         const res = await fetch(`/api/access/requests?${queryParams.toString()}`, {
           cache: "no-store",
-          signal: controller.signal,
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(35_000)]),
         });
 
         if (!res.ok) {
@@ -134,12 +145,20 @@ export function AccessRequestList({
         const data = json.data;
 
         // Check if aborted before updating state
-        if (controller.signal.aborted) {
-          return;
+        if (controller.signal.aborted || statusToFetch !== currentTabRef.current || !mountedRef.current) {
+          return false;
         }
 
-        const fetchedList: AccessRequest[] = data.requests || [];
+        if (!data || !Array.isArray(data.requests) || !Array.isArray(data.errors)) throw new Error("Invalid dashboard response");
+        setRepoErrors(data.errors);
+        if (data.errors.length && data.requests.length === 0) {
+          setTabCounts(prev => { const next = { ...prev }; delete next[statusToFetch]; return next; });
+          throw new Error("Repositories could not be loaded. Refresh to retry; retained records may be stale.");
+        }
+        if (!data.errors.length && pagesLimit) setCurrentMaxPages(pagesLimit);
+        const fetchedList: AccessRequest[] = data.requests;
         setRequests(fetchedList);
+        setSelectedRequest(previous => previous ? fetchedList.find(item => item.id === previous.id) || previous : null);
         setRepoErrors(data.errors || []);
         setHasMore(Boolean(data.hasMore));
 
@@ -148,13 +167,16 @@ export function AccessRequestList({
           ...prev,
           [statusToFetch]: {
             count: fetchedList.length,
-            isTruncated: Boolean(data.truncated || data.hasMore),
+            isTruncated: Boolean(data.truncated || data.hasMore || data.errors.length),
           },
         }));
 
         // If fetching pending, calculate per-repo pending counts
         if (statusToFetch === "pending") {
           const counts: Record<string, number> = {};
+          for (const key of Object.keys(data.repositoryPagination || {})) {
+            if (!key.startsWith("space:")) counts[key] = 0;
+          }
           for (const req of fetchedList) {
             const key = `${req.repository.type}:${req.repository.repoId}`;
             counts[key] = (counts[key] || 0) + 1;
@@ -175,26 +197,30 @@ export function AccessRequestList({
         }
 
         // Clear bulk selection on tab switch or reload
-        if (!isAppending) {
-          setSelectedIds(new Set());
-        }
+        const present = new Set(fetchedList.map(r => r.id));
+        setSelectedIds(prev => isAppending ? new Set([...prev].filter(id => present.has(id))) : new Set());
 
         // Update refresh timestamp ONLY on verified successful fetch & state update
-        if (shouldUpdateRefreshTimestamp({ success: true, aborted: controller.signal.aborted })) {
+        if (shouldUpdateRefreshTimestamp({ success: data.errors.length === 0, aborted: controller.signal.aborted })) {
           onRefreshedRef.current?.(new Date());
         }
+        return data.errors.length === 0;
       } catch (err: unknown) {
         if ((err as { name?: string }).name === "AbortError" || controller.signal.aborted) {
           // Ignore clean user-driven aborts
           return;
         }
         const msg = err instanceof Error ? err.message : "Network error loading requests";
+        setLoadError(msg);
         toast.error(msg);
+        return false;
       } finally {
-        if (!controller.signal.aborted) {
+        if (activeAbortControllerRef.current === controller && mountedRef.current) {
+          activeAbortControllerRef.current = null;
+          readingRef.current = false;
           setIsLoading(false);
           setIsLoadingMore(false);
-          onRefreshChangeRef.current?.(false);
+          onRefreshChangeRef.current?.(mutationLock.current);
         }
       }
     },
@@ -203,7 +229,9 @@ export function AccessRequestList({
 
   // Clean up abort controller on unmount
   React.useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       if (activeAbortControllerRef.current) {
         activeAbortControllerRef.current.abort();
         activeAbortControllerRef.current = null;
@@ -231,7 +259,15 @@ export function AccessRequestList({
   // Handle Tab Switch
   const handleTabChange = (val: string) => {
     const newStatus = val as RequestStatus;
-    if (newStatus === currentTab) return;
+    if (newStatus === currentTab || mutationLock.current) return;
+    currentTabRef.current = newStatus;
+    readingRef.current = true;
+    activeAbortControllerRef.current?.abort();
+    setIsLoading(true);
+    setRequests([]);
+    setRepoErrors([]);
+    setLoadError(null);
+    setIsDetailsOpen(false);
     setCurrentTab(newStatus);
     setSelectedIds(new Set());
     setHasMore(false);
@@ -239,20 +275,20 @@ export function AccessRequestList({
 
   // Handle Load More (incremental pagination bounded by ABSOLUTE_MAX_PAGES)
   const handleLoadMore = () => {
-    if (isPaginationAtHardCap(currentMaxPages, ABSOLUTE_MAX_PAGES)) {
+    if (mutationLock.current || readingRef.current || isPaginationAtHardCap(currentMaxPages, ABSOLUTE_MAX_PAGES)) {
       return;
     }
     const nextPages = getNextPageLimit(currentMaxPages, PAGE_INCREMENT, ABSOLUTE_MAX_PAGES);
     if (nextPages === currentMaxPages) {
       return;
     }
-    setCurrentMaxPages(nextPages);
     fetchTabRequests(currentTab, nextPages, true);
   };
 
   // Filtered requests based on search query, repo, and type
   const filteredRequests = React.useMemo(() => {
     return requests.filter((req) => {
+      if (req.status !== currentTab) return false;
       // 1. Repo Type Filter
       if (selectedType !== "all" && req.repository.type !== selectedType) {
         return false;
@@ -291,15 +327,16 @@ export function AccessRequestList({
 
       return true;
     });
-  }, [requests, selectedType, selectedRepoKey, searchQuery]);
+  }, [requests, selectedType, selectedRepoKey, searchQuery, currentTab]);
 
   // Selection handlers
   const handleToggleSelect = (id: string) => {
+    if (mutationLock.current || readingRef.current) return;
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) {
         next.delete(id);
-      } else {
+      } else if (next.size < 100) {
         next.add(id);
       }
       return next;
@@ -307,7 +344,8 @@ export function AccessRequestList({
   };
 
   const handleSelectAll = () => {
-    const allVisibleIds = new Set(filteredRequests.map((r) => r.id));
+    if (mutationLock.current || readingRef.current) return;
+    const allVisibleIds = new Set(filteredRequests.slice(0, 100).map((r) => r.id));
     setSelectedIds(allVisibleIds);
   };
 
@@ -315,275 +353,138 @@ export function AccessRequestList({
     setSelectedIds(new Set());
   };
 
-  // Single Actions
-  const handleApprove = async (request: AccessRequest) => {
+  // One synchronous lock covers all mutation entry points and snapshot commits.
+  const beginMutation = () => {
+    if (mutationLock.current || readingRef.current || loadError) return false;
+    mutationLock.current = true;
+    setIsMutating(true);
+    onRefreshChangeRef.current?.(true);
+    return true;
+  };
+
+  const reconcileMutation = async () => {
     try {
-      setIsMutating(true);
-      const res = await fetch("/api/access/approve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          repo: request.repository,
-          username: request.username,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error?.message || "Failed to approve access request");
-      }
-
-      toast.success(`Access approved for @${request.username}`);
-
-      // Update local state immediately
-      setRequests((prev) => prev.filter((r) => r.id !== request.id));
-      setSelectedIds((prev) => {
-        const next = new Set(prev);
-        next.delete(request.id);
-        return next;
-      });
-
-      // Update per-repo pending count if on pending tab
-      setRepoPendingCounts((prev) =>
-        applySingleActionRepoPendingCount(prev, request, "approve", currentTab)
-      );
-
-      // Conservative tab count updates:
-      setTabCounts((prev) =>
-        applySingleActionTabCounts(prev, currentTab, "approve")
-      );
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Approval failed");
+      if (mountedRef.current) await fetchTabRequests(currentTabRef.current, pagesRef.current, true, true);
     } finally {
-      setIsMutating(false);
+      mutationLock.current = false;
+      if (mountedRef.current) {
+        setIsMutating(false);
+        setIsBulkProcessing(false);
+        setBulkActionInProgress(null);
+        onRefreshChangeRef.current?.(false);
+      }
     }
   };
 
-  const handleReject = async (request: AccessRequest) => {
-    try {
-      setIsMutating(true);
-      const res = await fetch("/api/access/reject", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          repo: request.repository,
-          username: request.username,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error?.message || "Failed to reject access request");
-      }
-
-      toast.success(`Request rejected for @${request.username}`);
-
-      // Update local state immediately
-      setRequests((prev) => prev.filter((r) => r.id !== request.id));
-      setSelectedIds((prev) => {
-        const next = new Set(prev);
-        next.delete(request.id);
-        return next;
-      });
-
-      // Update per-repo pending count if on pending tab
-      setRepoPendingCounts((prev) =>
-        applySingleActionRepoPendingCount(prev, request, "reject", currentTab)
-      );
-
-      // Conservative tab count update:
-      setTabCounts((prev) =>
-        applySingleActionTabCounts(prev, currentTab, "reject")
-      );
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Rejection failed");
-    } finally {
-      setIsMutating(false);
-    }
+  const postMutation = async (action: string, body: unknown) => {
+    const response = await fetch(`/api/access/${action}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(35_000),
+    });
+    const json = await response.json();
+    if (!response.ok) throw Object.assign(new Error(json.error?.message || `Action failed (${response.status})`), { uncertain: response.status >= 500 });
+    return json.data;
   };
 
-  const handleRevoke = async (request: AccessRequest) => {
-    try {
-      setIsMutating(true);
-      const res = await fetch("/api/access/revoke", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          repo: request.repository,
-          username: request.username,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error?.message || "Failed to revoke access");
-      }
-
-      toast.success(`Access revoked for @${request.username}`);
-
-      // Update local state
-      setRequests((prev) => prev.filter((r) => r.id !== request.id));
-
-      // Update per-repo pending count if known (Accepted -> Revoke -> Pending)
-      setRepoPendingCounts((prev) =>
-        applySingleActionRepoPendingCount(prev, request, "revoke", currentTab)
-      );
-
-      // Conservative tab count update (Accepted - 1, Pending + 1 if known):
-      setTabCounts((prev) =>
-        applySingleActionTabCounts(prev, currentTab, "revoke")
-      );
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Revoke failed");
-    } finally {
-      setIsMutating(false);
-    }
+  // A disconnected response does not prove the upstream mutation failed.
+  const invalidateCounts = () => {
+    setTabCounts({});
+    setRepoPendingCounts({});
+    setRepoPendingTruncated({});
   };
 
-  // Bulk Actions
-  const handleBulkApprove = async () => {
-    const selectedRequests = requests.filter((r) => selectedIds.has(r.id));
-    if (selectedRequests.length === 0) return;
-
+  const handleSingle = async (request: AccessRequest, action: "approve" | "reject" | "revoke"): Promise<boolean> => {
+    if (!beginMutation()) return false;
+    let success = false;
     try {
-      setIsBulkProcessing(true);
-      setBulkActionInProgress("approve");
+      await postMutation(action, { repo: request.repository, username: request.username });
+      if (!mountedRef.current) return false;
+      success = true;
+      toast.success(`${action === "approve" ? "Access approved" : action === "reject" ? "Request rejected" : "Access revoked"} for @${request.username}`);
+      setRequests(prev => prev.filter(r => r.id !== request.id));
+      setSelectedIds(prev => new Set([...prev].filter(id => id !== request.id)));
+      setRepoPendingCounts(prev => applySingleActionRepoPendingCount(prev, request, action, request.status));
+      setTabCounts(prev => applySingleActionTabCounts(prev, request.status, action));
+    } catch (err) {
+      if (mountedRef.current) {
+        if ((err as { uncertain?: boolean }).uncertain !== false) invalidateCounts();
+        toast.error(`${err instanceof Error ? err.message : "Action could not be confirmed"}. Refreshing to verify the current state.`);
+      }
+    } finally {
+      await reconcileMutation();
+    }
+    return success;
+  };
+  const handleApprove = (request: AccessRequest) => handleSingle(request, "approve");
+  const handleReject = (request: AccessRequest) => handleSingle(request, "reject");
+  const handleRevoke = (request: AccessRequest) => handleSingle(request, "revoke");
 
-      const items = selectedRequests.map((r) => ({
-        id: r.id,
-        repo: r.repository,
-        username: r.username,
-      }));
+  const handleGrant = async (repo: ManagedRepository, username: string): Promise<boolean> => {
+    if (!beginMutation()) return false;
+    let success = false;
+    try {
+      await postMutation("grant", { repo, username });
+      if (!mountedRef.current) return false;
+      success = true;
+      // Grant can move an existing pending/rejected user; the API does not return the source status.
+      invalidateCounts();
+    } catch (err) {
+      if (mountedRef.current) {
+        if ((err as { uncertain?: boolean }).uncertain !== false) invalidateCounts();
+        toast.error(err instanceof Error ? err.message : "Grant could not be confirmed");
+      }
+    } finally {
+      await reconcileMutation();
+    }
+    return success;
+  };
 
-      const res = await fetch("/api/access/approve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items }),
+  const handleBulk = async (action: "approve" | "reject") => {
+    const selectedRequests = requests.filter(r => selectedIds.has(r.id) && r.status === "pending");
+    if (!selectedRequests.length || selectedRequests.length > 100 || !beginMutation()) return;
+    setIsBulkProcessing(true);
+    setBulkActionInProgress(action);
+    try {
+      const result = await postMutation(action, {
+        items: selectedRequests.map(r => ({ repo: r.repository, username: r.username })),
       });
-
-      const json = await res.json();
-      if (!res.ok) {
-        throw new Error(json.error?.message || "Bulk approval failed");
-      }
-
-      const result = json.data;
-      if (result.failed === 0) {
-        toast.success(`Successfully approved ${result.succeeded} requests.`);
-      } else {
-        toast.warning(
-          `${result.succeeded} approved, ${result.failed} failed. Retained failed items in selection.`
-        );
-      }
-
-      // Use exact composite key (id) for partial failure identification
+      if (!mountedRef.current) return;
       const failedIds = new Set<string>(result.errors.map((e: { id: string }) => e.id));
-
-      setRequests((prev) =>
-        prev.filter((r) => !selectedIds.has(r.id) || failedIds.has(r.id))
-      );
-
-      // Retain only failed requests in selection
-      setSelectedIds((prev) => {
-        const next = new Set<string>();
-        for (const id of prev) {
-          if (failedIds.has(id)) {
-            next.add(id);
-          }
-        }
-        return next;
-      });
-
-      // Update per-repo pending counts for successful items
-      if (currentTab === "pending") {
-        setRepoPendingCounts((prev) =>
-          applyBulkActionRepoPendingCounts(prev, selectedRequests, failedIds)
-        );
-      }
-
-      // Update tab counts conservatively
-      setTabCounts((prev) =>
-        applyBulkActionTabCounts(prev, "approve", result.succeeded)
-      );
+      const succeededIds = new Set(selectedRequests.filter(r => !failedIds.has(r.id)).map(r => r.id));
+      setRequests(prev => prev.filter(r => !succeededIds.has(r.id)));
+      setSelectedIds(failedIds);
+      setRepoPendingCounts(prev => applyBulkActionRepoPendingCounts(prev, selectedRequests, failedIds));
+      setTabCounts(prev => applyBulkActionTabCounts(prev, action, result.succeeded));
+      if (result.failed) {
+        // A timeout can have committed upstream; reconciliation below determines visible state.
+        invalidateCounts();
+        toast.warning(`${result.succeeded} succeeded, ${result.failed} could not be confirmed. Refreshing; unresolved pending items remain selected.`);
+      } else toast.success(`Successfully ${action === "approve" ? "approved" : "rejected"} ${result.succeeded} requests.`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Bulk approval encountered an error");
+      if (mountedRef.current) {
+        if ((err as { uncertain?: boolean }).uncertain !== false) invalidateCounts();
+        toast.error(err instanceof Error ? err.message : "Bulk action could not be confirmed");
+      }
     } finally {
-      setIsBulkProcessing(false);
-      setBulkActionInProgress(null);
+      await reconcileMutation();
     }
   };
-
-  const handleBulkReject = async () => {
-    const selectedRequests = requests.filter((r) => selectedIds.has(r.id));
-    if (selectedRequests.length === 0) return;
-
-    try {
-      setIsBulkProcessing(true);
-      setBulkActionInProgress("reject");
-
-      const items = selectedRequests.map((r) => ({
-        id: r.id,
-        repo: r.repository,
-        username: r.username,
-      }));
-
-      const res = await fetch("/api/access/reject", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items }),
-      });
-
-      const json = await res.json();
-      if (!res.ok) {
-        throw new Error(json.error?.message || "Bulk rejection failed");
-      }
-
-      const result = json.data;
-      if (result.failed === 0) {
-        toast.success(`Successfully rejected ${result.succeeded} requests.`);
-      } else {
-        toast.warning(
-          `${result.succeeded} rejected, ${result.failed} failed. Retained failed items in selection.`
-        );
-      }
-
-      // Use exact composite key (id) for partial failure identification
-      const failedIds = new Set<string>(result.errors.map((e: { id: string }) => e.id));
-
-      setRequests((prev) =>
-        prev.filter((r) => !selectedIds.has(r.id) || failedIds.has(r.id))
-      );
-
-      setSelectedIds((prev) => {
-        const next = new Set<string>();
-        for (const id of prev) {
-          if (failedIds.has(id)) {
-            next.add(id);
-          }
-        }
-        return next;
-      });
-
-      // Update per-repo pending counts for successful items
-      if (currentTab === "pending") {
-        setRepoPendingCounts((prev) =>
-          applyBulkActionRepoPendingCounts(prev, selectedRequests, failedIds)
-        );
-      }
-
-      // Update tab counts conservatively
-      setTabCounts((prev) =>
-        applyBulkActionTabCounts(prev, "reject", result.succeeded)
-      );
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Bulk rejection encountered an error");
-    } finally {
-      setIsBulkProcessing(false);
-      setBulkActionInProgress(null);
-    }
-  };
+  const handleBulkApprove = () => handleBulk("approve");
+  const handleBulkReject = () => handleBulk("reject");
+  const busy = isMutating || isBulkProcessing || isLoading || isLoadingMore;
+  const actionsDisabled = busy || !!loadError;
 
   return (
     <div className="space-y-4">
+      {loadError && <div role="alert" className="rounded-lg border border-destructive p-3 text-sm">
+        {loadError} <Button variant="outline" size="sm" disabled={busy} onClick={() => fetchTabRequests(currentTab, currentMaxPages)}>Retry</Button>
+      </div>}
+      {(loadError || repoErrors.length > 0) && <div className="flex gap-2">
+        <Button variant="outline" size="sm" disabled={busy} onClick={() => fetchTabRequests(currentTab, currentMaxPages)}>Retry repositories</Button>
+        {currentMaxPages > 1 && <Button variant="outline" size="sm" disabled={busy} onClick={() => fetchTabRequests(currentTab, Math.max(1, Math.floor(currentMaxPages / 2)))}>Load smaller window</Button>}
+      </div>}
       {/* Partial Repository Failure Alert */}
       {repoErrors.length > 0 && (
         <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
@@ -591,8 +492,8 @@ export function AccessRequestList({
             <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
             <span>
               {repoErrors.length === 1
-                ? `1 repository could not be loaded (${repoErrors[0].repo.repoId}). Other repositories remain fully functional.`
-                : `${repoErrors.length} repositories could not be loaded. Other repositories remain fully functional.`}
+                ? `1 repository could not be loaded (${repoErrors[0].repo.repoId}). Loaded repositories remain available; counts are incomplete.`
+                : `${repoErrors.length} repositories could not be loaded. Loaded repositories remain available; counts are incomplete.`}
             </span>
           </div>
           <Link
@@ -608,7 +509,7 @@ export function AccessRequestList({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <Tabs value={currentTab} onValueChange={handleTabChange} className="w-full sm:w-auto">
           <TabsList className="grid w-full grid-cols-3 sm:w-auto">
-            <TabsTrigger value="pending" className="gap-2 text-xs sm:text-sm">
+            <TabsTrigger disabled={isMutating} value="pending" className="gap-2 text-xs sm:text-sm">
               <span>Pending</span>
               {tabCounts.pending !== undefined && (
                 <Badge
@@ -621,7 +522,7 @@ export function AccessRequestList({
               )}
             </TabsTrigger>
 
-            <TabsTrigger value="accepted" className="gap-2 text-xs sm:text-sm">
+            <TabsTrigger disabled={isMutating} value="accepted" className="gap-2 text-xs sm:text-sm">
               <span>Accepted</span>
               {tabCounts.accepted !== undefined && (
                 <Badge
@@ -634,7 +535,7 @@ export function AccessRequestList({
               )}
             </TabsTrigger>
 
-            <TabsTrigger value="rejected" className="gap-2 text-xs sm:text-sm">
+            <TabsTrigger disabled={isMutating} value="rejected" className="gap-2 text-xs sm:text-sm">
               <span>Rejected</span>
               {tabCounts.rejected !== undefined && (
                 <Badge
@@ -652,14 +553,8 @@ export function AccessRequestList({
         <div className="flex items-center justify-end">
           <GrantAccessDialog
             repositories={configuredRepositories}
-            onGranted={() => {
-              // Refresh active tab
-              fetchTabRequests(currentTab, currentMaxPages);
-              // Optimistically update accepted count if known
-              setTabCounts((prev) =>
-                applySingleActionTabCounts(prev, currentTab, "grant")
-              );
-            }}
+            onGrant={handleGrant}
+            disabled={actionsDisabled}
           />
         </div>
       </div>
@@ -696,7 +591,9 @@ export function AccessRequestList({
           </div>
         ) : filteredRequests.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
-            {searchQuery || selectedRepoKey !== "all" || selectedType !== "all" ? (
+            {loadError || repoErrors.length > 0 || hasMore ? (
+              <><Inbox className="h-10 w-10 text-muted-foreground/50 mb-3" /><h3>No requests in the current window</h3><p className="text-xs text-muted-foreground">Results are incomplete. Retry loading or expand the window before concluding the inbox is empty.</p></>
+            ) : searchQuery || selectedRepoKey !== "all" || selectedType !== "all" ? (
               <>
                 <Inbox className="h-10 w-10 text-muted-foreground/50 mb-3" />
                 <h3 className="font-semibold text-base text-foreground">No matching requests</h3>
@@ -737,7 +634,7 @@ export function AccessRequestList({
                 onApprove={handleApprove}
                 onReject={handleReject}
                 onRevoke={handleRevoke}
-                isMutating={isMutating}
+                isMutating={actionsDisabled}
               />
             ))}
           </div>
@@ -762,7 +659,7 @@ export function AccessRequestList({
                   variant="outline"
                   size="sm"
                   onClick={handleLoadMore}
-                  disabled={isLoadingMore}
+                  disabled={busy}
                   className="h-7 text-xs"
                 >
                   {isLoadingMore ? (
@@ -789,7 +686,7 @@ export function AccessRequestList({
           onClearSelection={handleClearSelection}
           onBulkApprove={handleBulkApprove}
           onBulkReject={handleBulkReject}
-          isProcessing={isBulkProcessing}
+          isProcessing={actionsDisabled}
           actionInProgress={bulkActionInProgress}
         />
       )}
@@ -802,7 +699,8 @@ export function AccessRequestList({
         onApprove={handleApprove}
         onReject={handleReject}
         onRevoke={handleRevoke}
-        isMutating={isMutating}
+        isMutating={actionsDisabled || !requests.some(item => item.id === selectedRequest?.id)}
+        stale={Boolean(selectedRequest && !requests.some(item => item.id === selectedRequest.id))}
       />
     </div>
   );

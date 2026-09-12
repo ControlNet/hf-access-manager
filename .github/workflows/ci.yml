@@ -11,12 +11,6 @@ jobs:
     name: Test, Lint & Build
     runs-on: ubuntu-latest
 
-    env:
-      HF_TOKEN: "hf_ci_dummy_token_12345"
-      HF_REPOSITORIES: "model:meta-llama/Llama-2-7b,dataset:VL4AI/SpatialBench"
-      APP_PASSWORD: "ci-dummy-password-at-least-16-chars"
-      AUTH_SECRET: "ci-dummy-auth-secret-key-at-least-32-characters"
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -59,4 +53,8 @@ jobs:
         with:
           context: .
           push: false
+          load: true
           tags: hf-access-manager:ci
+
+      - name: Verify isolated runtime authentication and configuration
+        run: docker run --rm -i --network none --entrypoint node hf-access-manager:ci - < scripts/runtime-smoke.cjs

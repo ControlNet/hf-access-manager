@@ -16,7 +16,6 @@ export interface AccessRequest {
   status: RequestStatus;
   repository: ManagedRepository;
   fields: Record<string, unknown>;
-  raw?: unknown;
 }
 
 export interface RepositoryStatus {

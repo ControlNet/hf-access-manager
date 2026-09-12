@@ -4,22 +4,18 @@ import { approveRequest } from "@/lib/huggingface";
 import { executeBulkApprove } from "@/lib/access";
 import { findManagedRepo } from "@/lib/repositories";
 import { bulkMutationSchema, singleMutationSchema } from "@/lib/validations";
-import { validateMutationOrigin } from "@/lib/csrf";
+import { authorizeApiRequest, readJsonRequest } from "@/lib/api-security";
 
 export async function POST(request: NextRequest) {
-  if (!validateMutationOrigin(request)) {
-    return NextResponse.json(
-      { error: { code: "CSRF_ERROR", message: "Invalid request origin" } },
-      { status: 403 }
-    );
-  }
+  const denied = await authorizeApiRequest(request, true);
+  if (denied) return denied;
 
   try {
-    const body = await request.json();
+    const body = await readJsonRequest(request);
     const { hfRepositories } = getEnv();
 
     // Check if bulk mutation
-    if (body && Array.isArray(body.items)) {
+    if (body && typeof body === "object" && "items" in body && Array.isArray(body.items)) {
       const parsedBulk = bulkMutationSchema.safeParse(body);
       if (!parsedBulk.success) {
         return NextResponse.json(
@@ -50,7 +46,7 @@ export async function POST(request: NextRequest) {
         validatedItems.push({ repo: matched, username: item.username });
       }
 
-      const result = await executeBulkApprove(validatedItems);
+      const result = await executeBulkApprove(validatedItems, 5, { signal: request.signal });
       return NextResponse.json({ data: result });
     }
 
@@ -83,7 +79,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    await approveRequest(matchedRepo, username);
+    await approveRequest(matchedRepo, username, { signal: request.signal });
 
     return NextResponse.json({
       data: {

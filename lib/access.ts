@@ -15,7 +15,9 @@ import {
   getRejectedRequests,
   isGatingSupported,
   rejectRequest,
+  ListAccessRequestsOptions,
 } from "./huggingface";
+import { MAX_RESPONSE_BYTES, MAX_UPSTREAM_BYTES, operationSignal, REPOSITORY_CONCURRENCY, RequestOptions } from "./request-budget";
 
 export interface AggregateRequestsResult {
   requests: AccessRequest[];
@@ -39,6 +41,7 @@ export async function mapConcurrent<T, R>(
   concurrency: number,
   fn: (item: T) => Promise<R>
 ): Promise<R[]> {
+  if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error("Concurrency must be a positive integer");
   const results: R[] = new Array(items.length);
   let currentIndex = 0;
 
@@ -60,7 +63,7 @@ export async function mapConcurrent<T, R>(
 async function fetchRepoRequests(
   repo: ManagedRepository,
   status: RequestStatus,
-  options?: { maxPages?: number }
+  options?: ListAccessRequestsOptions
 ) {
   if (!isGatingSupported(repo.type)) {
     return { requests: [], hasMore: false, truncated: false, totalLoaded: 0 };
@@ -80,42 +83,55 @@ async function fetchRepoRequests(
 
 /**
  * Aggregates access requests across all configured repositories with failure isolation.
- * Uses Promise.allSettled so a failure on one repository will never break the rest of the inbox.
+ * Settles repositories independently with bounded concurrency and one shared deadline.
  * Explicitly records whether any repository had its results truncated by pagination boundaries.
  */
 export async function aggregateRequests(
   repositories: ManagedRepository[],
   status: RequestStatus,
-  options?: { maxPages?: number }
+  options?: ListAccessRequestsOptions
 ): Promise<AggregateRequestsResult> {
   const errors: AggregateRequestsResult["errors"] = [];
   const allRequests: AccessRequest[] = [];
   let overallHasMore = false;
   let overallTruncated = false;
 
-  const results = await Promise.allSettled(
-    repositories.map(async (repo) => {
+  const signal = operationSignal(options?.signal);
+  const budget = { remainingBytes: MAX_UPSTREAM_BYTES };
+  const results = await mapConcurrent(repositories, REPOSITORY_CONCURRENCY, async (repo) => {
+    try {
+      signal.throwIfAborted();
       if (!isGatingSupported(repo.type)) {
-        return { repo, requests: [], hasMore: false, truncated: false };
+        return { status: "fulfilled" as const, value: { repo, requests: [], hasMore: false, truncated: false } };
       }
-      const paginated = await fetchRepoRequests(repo, status, options);
-      return {
+      const paginated = await fetchRepoRequests(repo, status, { ...options, signal, budget });
+      return { status: "fulfilled" as const, value: {
         repo,
         requests: paginated.requests,
         hasMore: paginated.hasMore,
         truncated: paginated.truncated,
-      };
-    })
-  );
+      } };
+    } catch (reason) {
+      return { status: "rejected" as const, reason };
+    }
+  });
+  options?.signal?.throwIfAborted();
 
   let successfulRepos = 0;
   const repositoryPagination: Record<string, { hasMore: boolean; truncated: boolean }> = {};
+  let responseBytes = 0;
 
   for (let i = 0; i < results.length; i++) {
     const result = results[i];
     const repo = repositories[i];
 
     if (result.status === "fulfilled") {
+      const bytes = Buffer.byteLength(JSON.stringify(result.value.requests));
+      if (responseBytes + bytes > MAX_RESPONSE_BYTES) {
+        errors.push({ repo, error: "Result exceeds the safe display size. Reduce the history window or configured repositories.", code: "HF_RESPONSE_LIMIT" });
+        continue;
+      }
+      responseBytes += bytes;
       successfulRepos++;
       allRequests.push(...result.value.requests);
       if (result.value.hasMore) overallHasMore = true;
@@ -160,22 +176,18 @@ export async function aggregateRequests(
  * Aggregates diagnostic status across all configured repositories with failure isolation.
  */
 export async function aggregateRepositoriesStatus(
-  repositories: ManagedRepository[]
+  repositories: ManagedRepository[],
+  options?: RequestOptions
 ): Promise<RepositoryStatus[]> {
-  const results = await Promise.allSettled(
-    repositories.map(async (repo) => checkRepositoryStatus(repo))
-  );
-
-  return results.map((result, idx) => {
-    if (result.status === "fulfilled") {
-      return result.value;
+  const signal = operationSignal(options?.signal);
+  const budget = { remainingBytes: MAX_UPSTREAM_BYTES };
+  return mapConcurrent(repositories, REPOSITORY_CONCURRENCY, async repo => {
+    try {
+      signal.throwIfAborted();
+      return await checkRepositoryStatus(repo, { ...options, signal, budget });
+    } catch {
+      return { repository: repo, status: "error", message: "Repository check cancelled or timed out." };
     }
-    const err = result.reason;
-    return {
-      repository: repositories[idx],
-      status: "error",
-      message: err instanceof Error ? err.message : String(err),
-    };
   });
 }
 
@@ -192,15 +204,19 @@ export function getBulkItemKey(item: BulkActionItem): string {
  */
 export async function executeBulkApprove(
   items: BulkActionItem[],
-  concurrency = 5
+  concurrency = 5,
+  options?: RequestOptions
 ): Promise<BulkActionResult> {
   const errors: BulkActionResult["errors"] = [];
   let succeeded = 0;
+  const signal = operationSignal(options?.signal);
+  const budget = options?.budget ?? { remainingBytes: MAX_UPSTREAM_BYTES };
 
   await mapConcurrent(items, concurrency, async (item) => {
     const itemKey = getBulkItemKey(item);
     try {
-      await approveRequest(item.repo, item.username);
+      signal.throwIfAborted();
+      await approveRequest(item.repo, item.username, { ...options, signal, budget });
       succeeded++;
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -226,15 +242,19 @@ export async function executeBulkApprove(
  */
 export async function executeBulkReject(
   items: BulkActionItem[],
-  concurrency = 5
+  concurrency = 5,
+  options?: RequestOptions
 ): Promise<BulkActionResult> {
   const errors: BulkActionResult["errors"] = [];
   let succeeded = 0;
+  const signal = operationSignal(options?.signal);
+  const budget = options?.budget ?? { remainingBytes: MAX_UPSTREAM_BYTES };
 
   await mapConcurrent(items, concurrency, async (item) => {
     const itemKey = getBulkItemKey(item);
     try {
-      await rejectRequest(item.repo, item.username);
+      signal.throwIfAborted();
+      await rejectRequest(item.repo, item.username, { ...options, signal, budget });
       succeeded++;
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);

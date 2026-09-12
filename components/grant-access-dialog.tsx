@@ -18,10 +18,11 @@ import { toast } from "sonner";
 
 interface GrantAccessDialogProps {
   repositories: ManagedRepository[];
-  onGranted: () => void;
+  onGrant: (repo: ManagedRepository, username: string) => Promise<boolean>;
+  disabled?: boolean;
 }
 
-export function GrantAccessDialog({ repositories, onGranted }: GrantAccessDialogProps) {
+export function GrantAccessDialog({ repositories, onGrant, disabled }: GrantAccessDialogProps) {
   const [open, setOpen] = React.useState(false);
   const [selectedRepoKey, setSelectedRepoKey] = React.useState<string>("");
   const [username, setUsername] = React.useState("");
@@ -60,25 +61,14 @@ export function GrantAccessDialog({ repositories, onGranted }: GrantAccessDialog
 
     try {
       setIsSubmitting(true);
-      const res = await fetch("/api/access/grant", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          repo: matchedRepo,
-          username: trimmedUser,
-        }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error?.message || "Failed to grant access");
+      if (!await onGrant(matchedRepo, trimmedUser)) {
+        setErrorMessage("Grant was not confirmed. Check the refreshed list before retrying.");
+        return;
       }
 
       toast.success(`Access granted to @${trimmedUser}`);
       setUsername("");
       setOpen(false);
-      onGranted();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Error granting access";
       setErrorMessage(msg);
@@ -89,9 +79,9 @@ export function GrantAccessDialog({ repositories, onGranted }: GrantAccessDialog
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={value => { if (!isSubmitting) setOpen(value); }}>
       <DialogTrigger asChild>
-        <Button size="sm" className="gap-1.5 font-medium shadow-sm">
+        <Button disabled={disabled || eligibleRepos.length === 0} size="sm" className="gap-1.5 font-medium shadow-sm">
           <UserPlus className="h-4 w-4" />
           <span>Grant Access</span>
         </Button>
@@ -159,7 +149,7 @@ export function GrantAccessDialog({ repositories, onGranted }: GrantAccessDialog
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={isSubmitting || !username.trim()}>
+            <Button type="submit" disabled={disabled || isSubmitting || !username.trim()}>
               {isSubmitting ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

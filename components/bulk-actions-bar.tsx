@@ -27,7 +27,8 @@ export function BulkActionsBar({
 }: BulkActionsBarProps) {
   if (selectedCount === 0) return null;
 
-  const isAllSelected = selectedCount === totalCount && totalCount > 0;
+  const selectableCount = Math.min(totalCount, 100);
+  const isAllSelected = selectedCount === selectableCount && selectableCount > 0;
 
   return (
     <div className="sticky bottom-4 z-30 flex items-center justify-between rounded-lg border bg-card/95 px-4 py-3 shadow-xl backdrop-blur">
@@ -47,13 +48,13 @@ export function BulkActionsBar({
           ) : (
             <>
               <CheckSquare className="h-3.5 w-3.5" />
-              <span>Select all ({totalCount})</span>
+              <span>Select {totalCount > 100 ? "first 100" : `all (${totalCount})`}</span>
             </>
           )}
         </Button>
 
         <span className="text-xs font-semibold text-foreground">
-          {selectedCount} {selectedCount === 1 ? "request" : "requests"} selected
+          {selectedCount} {selectedCount === 1 ? "request" : "requests"} selected (maximum 100)
         </span>
       </div>
 

@@ -28,10 +28,11 @@ interface AccessRequestDetailsProps {
   request: AccessRequest | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onApprove: (request: AccessRequest) => Promise<void>;
-  onReject: (request: AccessRequest) => Promise<void>;
-  onRevoke: (request: AccessRequest) => Promise<void>;
+  onApprove: (request: AccessRequest) => Promise<boolean>;
+  onReject: (request: AccessRequest) => Promise<boolean>;
+  onRevoke: (request: AccessRequest) => Promise<boolean>;
   isMutating: boolean;
+  stale?: boolean;
 }
 
 export function AccessRequestDetails({
@@ -42,6 +43,7 @@ export function AccessRequestDetails({
   onReject,
   onRevoke,
   isMutating,
+  stale = false,
 }: AccessRequestDetailsProps) {
   if (!request) return null;
 
@@ -64,7 +66,7 @@ export function AccessRequestDetails({
       return (
         <ul className="list-inside list-disc space-y-1">
           {value.map((v, i) => (
-            <li key={i}>{String(v)}</li>
+            <li key={i}>{renderFieldValue(v)}</li>
           ))}
         </ul>
       );
@@ -116,6 +118,9 @@ export function AccessRequestDetails({
         </SheetHeader>
 
         <div className="flex-1 space-y-6 py-4">
+          {stale && <p role="status" className="rounded border p-3 text-sm text-muted-foreground">
+            This request is no longer in the loaded list. Close this panel and refresh before acting.
+          </p>}
           {/* Metadata Section */}
           <div className="space-y-4 rounded-lg border bg-card p-4 text-sm shadow-sm">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -220,8 +225,7 @@ export function AccessRequestDetails({
                   size="sm"
                   disabled={isMutating}
                   onClick={async () => {
-                    await onReject(request);
-                    onOpenChange(false);
+                    if (await onReject(request)) onOpenChange(false);
                   }}
                   className="gap-1.5"
                 >
@@ -238,8 +242,7 @@ export function AccessRequestDetails({
                   size="sm"
                   disabled={isMutating}
                   onClick={async () => {
-                    await onApprove(request);
-                    onOpenChange(false);
+                    if (await onApprove(request)) onOpenChange(false);
                   }}
                   className="gap-1.5"
                 >
@@ -259,8 +262,7 @@ export function AccessRequestDetails({
                 size="sm"
                 disabled={isMutating}
                 onClick={async () => {
-                  await onRevoke(request);
-                  onOpenChange(false);
+                  if (await onRevoke(request)) onOpenChange(false);
                 }}
                 className="gap-1.5"
               >
@@ -279,8 +281,7 @@ export function AccessRequestDetails({
                 size="sm"
                 disabled={isMutating}
                 onClick={async () => {
-                  await onApprove(request);
-                  onOpenChange(false);
+                  if (await onApprove(request)) onOpenChange(false);
                 }}
                 className="gap-1.5"
               >

@@ -24,21 +24,37 @@ export function RepositoryStatusList({ initialStatuses = [] }: RepositoryStatusL
   const [statuses, setStatuses] = React.useState<IRepositoryStatus[]>(initialStatuses);
   const [isLoading, setIsLoading] = React.useState(initialStatuses.length === 0);
   const [isRefreshing, setIsRefreshing] = React.useState(false);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
+  const activeRead = React.useRef<AbortController | null>(null);
 
   const fetchStatuses = React.useCallback(async () => {
+    activeRead.current?.abort();
+    const controller = new AbortController();
+    activeRead.current = controller;
     try {
       setIsRefreshing(true);
-      const res = await fetch("/api/access/repositories", { cache: "no-store" });
+      setLoadError(null);
+      const res = await fetch("/api/access/repositories", {
+        cache: "no-store", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(35_000)]),
+      });
       if (!res.ok) {
         throw new Error(`Failed to check repository statuses (${res.status})`);
       }
       const json = await res.json();
-      setStatuses(json.data || []);
+      if (controller.signal.aborted) return;
+      if (!Array.isArray(json.data)) throw new Error("Invalid repository health response");
+      setStatuses(json.data);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Error fetching repository health");
+      if (controller.signal.aborted) return;
+      const message = err instanceof Error ? err.message : "Error fetching repository health";
+      setLoadError(message);
+      toast.error(message);
     } finally {
-      setIsRefreshing(false);
-      setIsLoading(false);
+      if (activeRead.current === controller) {
+        activeRead.current = null;
+        setIsRefreshing(false);
+        setIsLoading(false);
+      }
     }
   }, []);
 
@@ -46,7 +62,8 @@ export function RepositoryStatusList({ initialStatuses = [] }: RepositoryStatusL
     if (initialStatuses.length === 0) {
       fetchStatuses();
     }
-  }, [initialStatuses, fetchStatuses]);
+    return () => { activeRead.current?.abort(); activeRead.current = null; };
+  }, [initialStatuses.length, fetchStatuses]);
 
   return (
     <div className="space-y-6">
@@ -76,6 +93,10 @@ export function RepositoryStatusList({ initialStatuses = [] }: RepositoryStatusL
         </Button>
       </div>
 
+      {loadError && <p role="alert" className="rounded border border-destructive/30 p-3 text-sm text-destructive">
+        {loadError}. Recheck Health to retry; previous results may be stale.
+      </p>}
+
       {isLoading ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 3 }).map((_, i) => (
@@ -84,12 +105,12 @@ export function RepositoryStatusList({ initialStatuses = [] }: RepositoryStatusL
         </div>
       ) : statuses.length === 0 ? (
         <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          No repositories configured in HF_REPOSITORIES.
+          {loadError ? "Repository health is currently unavailable." : "No repositories configured in HF_REPOSITORIES."}
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {statuses.map((item) => {
-            const { repository, status, pendingCount, pendingHasMore, acceptedCount, rejectedCount, message, isPrivate, gated } = item;
+            const { repository, status, pendingCount, pendingHasMore, message, isPrivate, gated } = item;
             const repoUrl =
               repository.type === "dataset"
                 ? `https://huggingface.co/datasets/${repository.repoId}`

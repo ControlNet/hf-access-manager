@@ -7,7 +7,7 @@ export function isValidRepoType(type: string): type is RepoType {
 }
 
 /**
- * Returns canonical key for a repository: `<repoType>:<repoId>` in lowercase repoId
+ * Returns a type-normalized key while preserving the configured repository spelling.
  */
 export function canonicalRepoKey(repo: ManagedRepository | { type: string; repoId: string }): string {
   return `${repo.type.trim().toLowerCase()}:${repo.repoId.trim()}`;
@@ -56,7 +56,7 @@ export function parseRepositories(rawInput: string | undefined | null): ManagedR
     // Hugging Face repoIds are either "owner/repo" or sometimes single name "repo" for root models/datasets.
     // However, gated repos are virtually always owner/name or name. Let's allow standard chars.
     const repoIdPattern = /^[a-zA-Z0-9-._]+(\/[a-zA-Z0-9-._]+)?$/;
-    if (!repoIdPattern.test(repoId)) {
+    if (!repoIdPattern.test(repoId) || repoId.length > 200 || repoId.split("/").some(part => part === "." || part === "..")) {
       throw new Error(
         `Invalid repository identifier "${repoId}" in "${entry}". Must be in format <owner>/<repo-name> or <repo-name>.`
       );
@@ -72,6 +72,7 @@ export function parseRepositories(rawInput: string | undefined | null): ManagedR
     }
   }
 
+  if (repositories.length > 20) throw new Error("Configure at most 20 repositories per deployment to keep requests bounded.");
   return repositories;
 }
 

@@ -24,8 +24,8 @@ The application is:
 - **100% Stateless & Database-Free**: Hugging Face Hub itself remains the single source of truth.
 - **Unified Review Inbox**: Aggregates requests across multiple models and datasets into a single queue.
 - **Zero-Friction Review Flow**: Direct 1-click approvals and 1-click rejections without unnecessary confirmation prompts.
-- **Fail-Safe & Isolated**: A failure or rate limit on one repository never interrupts management of the others.
-- **Deployable Anywhere**: Deployable to Vercel in 60 seconds or self-hostable using Docker.
+- **Repository Failure Isolation**: Successfully loaded repositories remain available; incomplete totals are marked and failed loads can be retried.
+- **Deployment**: Supports Vercel or Docker with runtime configuration and documented request limits.
 
 ---
 
@@ -52,7 +52,9 @@ Hugging Face Hub API (https://huggingface.co/api/...)
 - `HF_TOKEN`, `APP_PASSWORD`, and `AUTH_SECRET` are strictly **server-only**. They are never prefixed with `NEXT_PUBLIC_` and never bundled into client JavaScript.
 - All state-changing mutations (`approve`, `reject`, `revoke`, `grant`) strictly validate the requested repository against the configured `HF_REPOSITORIES` allowlist before contacting Hugging Face.
 - Arbitrary repository mutations or unauthorized Hugging Face token misuse are blocked server-side (`HTTP 403 FORBIDDEN_REPOSITORY`).
-- CSRF origin and host verification protects mutation endpoints.
+- Login, logout, and access mutations validate the full origin. `X-Forwarded-Host` is never trusted. Set `APP_ORIGIN` to your public HTTPS origin when a proxy rewrites `Host`.
+- Protected API handlers and server pages verify the session independently of Middleware.
+- Pagination accepts only HTTPS links on the original Hugging Face origin and exact repository/status path. Redirects and cyclic links are rejected. Overlapping rows are deduplicated.
 
 ---
 
@@ -62,16 +64,16 @@ Hugging Face Hub API (https://huggingface.co/api/...)
 - **One-Click Actions**:
   - **Approve**: Instant approval with immediate optimistic UI update.
   - **Reject**: 1-click rejection without dialogue or justification prompts. Mistakes can be undone anytime from the *Rejected* tab.
-- **Bulk Actions**: Check multiple pending requests to bulk-approve or bulk-reject concurrently (with per-repository error isolation and rate-limiting safety).
+- **Bulk Actions**: Select up to 100 pending requests per batch. At most five mutations run concurrently; unresolved pending items remain selected after reconciliation. This limits concurrency, not requests per second.
 - **Dynamic Gated Form Rendering**: Automatically parses and displays arbitrary gated questions (affiliation, supervisor, country, intended use case, terms) without requiring code changes if questions are updated.
 - **Accepted & Rejected History**: Browse past reviewers, revoke accepted access if needed, or re-approve previously rejected candidates.
 - **Manual Access Granting**: Directly grant access to any Hugging Face `@username` via a quick modal dialog.
 - **Filtering & Search**: Real-time client-side search across names, usernames, emails, and custom gated form answers; filter by repository or repository type.
 - **Repository Diagnostics**: Dedicated `/repositories` page inspecting Hugging Face connectivity, gated status (`manual` vs `auto`), and request counts per repository (with explicit `+` truncation indicators).
-- **Shared Password Authentication & Instant Invalidation**: No database, no user accounts to manage, no third-party auth lock-in. Sessions are signed via stateless JWT cookies (`jose`) with cryptographic keys derived from both `AUTH_SECRET` and `APP_PASSWORD`. Rotating `APP_PASSWORD` immediately invalidates all existing reviewer sessions across all instances without requiring external cache or database state.
+- **Shared Password Authentication & Rotation**: No database, no user accounts to manage, no third-party auth lock-in. Sessions are signed via stateless JWT cookies (`jose`) with cryptographic keys derived from both `AUTH_SECRET` and `APP_PASSWORD`. Updating `APP_PASSWORD` or `AUTH_SECRET` and restarting/redeploying every serving instance invalidates old sessions on those instances. Old deployments must be protected or retired separately. Logout clears the browser cookie; copied tokens remain valid until expiry or key rotation.
 - **On-Demand Loading & Explicit Truncation**: Only Pending requests are loaded upon opening the dashboard. Accepted and Rejected histories load on-demand when their tabs are visited. Navigating back to a tab performs a fresh read from Hugging Face Hub so reviewer state stays in sync. When requests reach pagination limits, the UI displays explicit truncation indicators (`500+`) and a "Load more requests" button that expands the bounded history window rather than silently capping results.
 - **Context-Preserving Refresh**: The global refresh button triggers a fresh fetch of the active tab while preserving your current tab, repository filters, and search query.
-- **Race-Safe Tab Transitions**: Tab switching and unmounts utilize `AbortController` cancellation to prevent in-flight requests from overwriting the active view with stale data.
+- **Coordinated Requests and Actions**: Tab reads use cancellation and status ownership. Mutations temporarily lock conflicting actions and tab changes, then reconcile the active list. Failed drawer actions stay open. Failed Load More attempts preserve the committed window and remain retryable.
 - **Security Hardened**: Built-in anti-clickjacking (`frame-ancestors 'none'`, `X-Frame-Options: DENY`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, timing-safe password comparison, and `Cache-Control: private, no-store` on all authenticated API responses.
 - **Dark Mode Support**: Respects system theme preferences by default, with an instant toggle.
 
@@ -87,7 +89,8 @@ Configure the following variables in your deployment environment or `.env` file:
 | `HF_REPOSITORIES` | **Yes** | — | Comma-separated list of managed repositories in format `<type>:<owner>/<name>`. |
 | `APP_PASSWORD` | **Yes** | — | Shared password used by trusted reviewers to sign in (minimum 16 characters). |
 | `AUTH_SECRET` | **Yes** | — | Secret string (minimum 32 characters) used to sign and verify session JWT cookies. |
-| `SESSION_MAX_AGE` | No | `604800` | Session lifetime in seconds (defaults to 7 days). |
+| `SESSION_MAX_AGE` | No | `604800` | Integer seconds from 1 to 31536000; defaults to 7 days. |
+| `APP_ORIGIN` | No | HTTPS + request Host in production | Canonical public origin including port when nonstandard; no path/query/fragment. Recommended behind a proxy. |
 
 ### `HF_REPOSITORIES` Syntax
 Canonical format:
@@ -100,7 +103,7 @@ Supported types:
 - `dataset` (e.g. `dataset:VL4AI/SpatialBench`)
 - `space` (Configured and parsed, but see [Limitations](#limitations))
 
-Whitespace around commas or repository names is trimmed automatically. Malformed entries are rejected at startup with informative error messages.
+Whitespace around commas or repository names is trimmed automatically. Malformed entries are rejected when configuration is first read. Configure at most 20 repositories per deployment.
 
 ---
 
@@ -119,13 +122,7 @@ Create a `.env.local` file:
 cp .env.example .env.local
 ```
 
-Edit `.env.local` with your credentials:
-```bash
-HF_TOKEN=hf_yourWriteTokenHere
-HF_REPOSITORIES=model:your-org/your-model,dataset:your-org/your-dataset
-APP_PASSWORD=choose-a-strong-reviewer-password
-AUTH_SECRET=generate-a-random-secret-at-least-32-characters-long
-```
+Fill `.env.local` with your scoped Hugging Face token, actual repository identifiers, a random reviewer password, and a separate random signing secret. The example file deliberately leaves required values empty. Keep this file private; Git and Docker exclude it. Use a password manager or secret manager to generate and store credentials.
 
 ### 3. Run Development Server
 ```bash
@@ -154,9 +151,12 @@ The application is completely stateless and runs natively on Vercel:
    - `APP_PASSWORD`
    - `AUTH_SECRET` (generate with `openssl rand -base64 32`)
    - `SESSION_MAX_AGE` (optional)
+   - `APP_ORIGIN` (recommended: your public deployment origin)
 4. Click **Deploy**.
 
 > **Note on Vercel Functions**: Because session authentication uses stateless signed JWTs, any distributed Vercel serverless instance validates requests independently without needing an external session cache or database.
+
+Ensure your hosting plan and proxy allow at least 40 seconds per request (including body reading and upstream work). A platform deadline shorter than the application's deadlines can still produce an uncertain mutation outcome. Validate representative repository volumes before inviting reviewers.
 
 #### Password Rotation & Invalidation on Vercel
 Session tokens are cryptographically signed using a key derived from both `AUTH_SECRET` and `APP_PASSWORD`. On Vercel, serverless instances load environment variables when a deployment starts:
@@ -178,34 +178,27 @@ A production-optimized, multi-stage `Dockerfile` using Next.js standalone build 
 docker build -t hf-access-manager:latest .
 ```
 
+Builds require no HF/auth environment values. Runtime credentials are injected from your private `.env.local` file; they are not build arguments.
+
 #### Run the container:
 ```bash
 docker run -d \
   --name hf-access-manager \
-  -p 3000:3000 \
-  -e HF_TOKEN="hf_xxxxxxxxxxxxxxxxxxxx" \
-  -e HF_REPOSITORIES="model:owner/model-a,dataset:owner/dataset-b" \
-  -e APP_PASSWORD="your-shared-password" \
-  -e AUTH_SECRET="$(openssl rand -base64 32)" \
+  -p 127.0.0.1:3000:3000 \
+  --env-file .env.local \
   hf-access-manager:latest
 ```
 
 #### Docker Compose:
 ```yaml
-version: "3.8"
-
 services:
   hf-access-manager:
     image: hf-access-manager:latest
     build: .
     ports:
-      - "3000:3000"
-    environment:
-      - HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxx
-      - HF_REPOSITORIES=model:owner/model-a,dataset:owner/dataset-b
-      - APP_PASSWORD=your-shared-password
-      - AUTH_SECRET=your-random-secret-at-least-32-characters
-      - SESSION_MAX_AGE=604800
+      - "127.0.0.1:3000:3000"
+    env_file:
+      - .env.local
     restart: unless-stopped
 ```
 
@@ -217,15 +210,31 @@ services:
    - Rather than using your master Hugging Face user token, create a [Fine-Grained Token](https://huggingface.co/settings/tokens) scoped specifically to the repositories you manage with **Repository permissions: write**.
 2. **Keep `APP_PASSWORD` Strong & Rotate When Needed**:
    - The shared password protects the web UI and must be at least 16 characters long.
-   - When a collaborator leaves or access needs to be revoked, simply rotate `APP_PASSWORD`. All active reviewer sessions are immediately invalidated across all deployment instances without database state.
+   - When a collaborator leaves, rotate `APP_PASSWORD` and restart/redeploy every instance. Updating an environment file alone does not alter a running process. Protect or retire historical deployments that still hold the old values.
 3. **Keep `AUTH_SECRET` Private & Long**:
    - Ensure `AUTH_SECRET` is at least 32 random characters (e.g. `openssl rand -hex 32`).
 4. **HTTPS in Production**:
    - Cookies are configured with `SameSite=Lax` and `Secure` automatically in production environments. Ensure your self-hosted reverse proxy (Nginx, Caddy, Cloudflare) enforces HTTPS.
-5. **No Token Leakage**:
-   - `HF_TOKEN` is never sent to the client, never logged in API responses, and never accessible via browser developer tools.
+5. **Credential and PII Boundaries**:
+   - Only normalized request metadata and gated-form answers are returned to reviewers. The complete upstream `raw` object is not serialized. Treat all applicant data as private.
+   - Keep the token narrowly scoped even though server-side checks enforce the configured allowlist. Do not log request bodies, cookies, or authorization headers at the reverse proxy.
+6. **Login and Request Abuse**:
+   - Apply login throttling and request/body limits at your reverse proxy or hosting firewall. The application does not implement a distributed rate limiter.
+   - Preserve the public `Host` or configure `APP_ORIGIN`; discard client-supplied forwarded headers. Keep the backend port private. Production cookies require HTTPS.
+7. **Uncertain Mutation Outcomes**:
+   - A timeout or lost response can occur after Hugging Face applied the action. The dashboard reconciles the current list and invalidates potentially stale counts; inspect the result before retrying. It does not automatically retry mutations.
 
 ---
+
+## Limits and Recovery
+
+- Pending starts at 50 pages; Accepted/Rejected start at 10. Load More expands by 10, to at most 100 pages per repository. The limit advances only after a successful load.
+- Aggregation runs at most three repositories concurrently with a shared 25-second deadline. Individual upstream requests, including their bodies, have a 15-second deadline. Browser loads and actions have a 35-second deadline.
+- One upstream page is limited to 1 MB; an aggregate has an 8 MB upstream body budget and a 2 MB normalized-request budget. Repositories exceeding a budget are reported as failed, not silently counted as empty. Select **Load smaller window** to recover without increasing limits. Split large workloads across deployments if a single page is too large or many repositories fail.
+- Bulk requests accept 1–100 unique repository/user pairs, run at most five operations concurrently, and have a 25-second overall deadline. API JSON bodies are limited to 64 KB (login: 8 KB) with a 10-second read deadline.
+- Only visited tabs have counts. Partial results use `+`; an upstream outage does not claim inbox zero or update the successful-refresh timestamp. Successful empty repositories have an explicit Pending count of zero.
+- Manual grant may move an existing Pending/Rejected user. Since the API does not identify the source status or return new totals, cached counts are invalidated and recomputed on the next visit. Unknown counts are not fabricated.
+- The snapshot can still change due to another reviewer or direct Hub activity. Refresh reads the source of truth; there is no cross-reviewer transaction or audit database.
 
 ## Limitations
 
@@ -237,11 +246,26 @@ services:
 ## Continuous Integration
 
 Every push and pull request to `master` and `main` is validated via [GitHub Actions](.github/workflows/ci.yml) running:
-- **Vitest**: Full unit and regression test suite.
+- **Vitest**: Unit, actual API-handler, and React component integration tests using synthetic fixtures; no live Hugging Face mutations.
 - **TypeScript**: Strict typecheck (`tsc --noEmit`).
 - **ESLint**: Next.js and React linting rules.
 - **Next.js Standalone Build**: Production asset compilation and bundling.
-- **Docker**: Multi-stage container image build.
+- **Docker**: Multi-stage container image build and network-isolated runtime smoke checks.
+
+Verification commands:
+
+```bash
+npm ci
+npm test
+npx tsc --noEmit
+npm run lint
+npm run build
+docker build -t hf-access-manager:review .
+docker run --rm -i --network none --entrypoint node hf-access-manager:review - < scripts/runtime-smoke.cjs
+npm audit
+```
+
+Tests, type checking, lint, build, and runtime smoke checks should pass. `npm audit` findings require reachability review. Vitest is updated for its mock-server advisory; Next.js stays on 15.x with a same-major PostCSS override for its source-map advisories. Recheck the override on future Next.js updates.
 
 ---
 

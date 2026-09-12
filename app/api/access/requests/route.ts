@@ -3,10 +3,13 @@ import { getEnv } from "@/lib/env";
 import { aggregateRequests } from "@/lib/access";
 import { RequestStatus } from "@/lib/types";
 import { clampMaxPages } from "@/lib/pagination";
+import { authorizeApiRequest } from "@/lib/api-security";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
+  const denied = await authorizeApiRequest(request);
+  if (denied) return denied;
   try {
     const { searchParams } = new URL(request.url);
     const statusParam = searchParams.get("status") || "pending";
@@ -19,7 +22,7 @@ export async function GET(request: NextRequest) {
     const maxPages = clampMaxPages(searchParams.get("maxPages"));
 
     const { hfRepositories } = getEnv();
-    const result = await aggregateRequests(hfRepositories, status, { maxPages });
+    const result = await aggregateRequests(hfRepositories, status, { maxPages, signal: request.signal });
 
     const response = NextResponse.json({
       data: result,

@@ -41,7 +41,16 @@ export interface ApiResponse<T> {
   error?: ApiError;
 }
 
+export interface PaginatedAccessRequests {
+  requests: AccessRequest[];
+  hasMore: boolean;
+  truncated: boolean;
+  totalLoaded: number;
+  nextUrl?: string | null;
+}
+
 export interface BulkActionItem {
+  id?: string;
   repo: ManagedRepository;
   username: string;
 }
@@ -51,6 +60,7 @@ export interface BulkActionResult {
   succeeded: number;
   failed: number;
   errors: Array<{
+    id: string;
     item: BulkActionItem;
     error: string;
   }>;

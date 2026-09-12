@@ -1,19 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { jwtVerify } from "jose/jwt/verify";
+import { SESSION_COOKIE_NAME, verifyTokenWithSecrets } from "@/lib/session-key";
 
-const SESSION_COOKIE_NAME = "hf_access_session";
+function applySecurityHeaders(response: NextResponse, isApiRoute = false): NextResponse {
+  response.headers.set("X-Frame-Options", "DENY");
+  response.headers.set("Content-Security-Policy", "frame-ancestors 'none'");
+  response.headers.set("X-Content-Type-Options", "nosniff");
+  response.headers.set("Referrer-Policy", "same-origin");
 
-async function isTokenValid(token: string, secret: string): Promise<boolean> {
-  if (!token || !secret) return false;
-  try {
-    const key = new TextEncoder().encode(secret);
-    const { payload } = await jwtVerify(token, key, {
-      algorithms: ["HS256"],
-    });
-    return payload.authenticated === true;
-  } catch {
-    return false;
+  if (isApiRoute) {
+    response.headers.set("Cache-Control", "private, no-store, max-age=0, must-revalidate");
   }
+
+  return response;
 }
 
 export async function middleware(request: NextRequest) {
@@ -25,25 +23,29 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/api/auth/login") ||
     pathname === "/favicon.ico"
   ) {
-    return NextResponse.next();
+    return applySecurityHeaders(NextResponse.next(), pathname.startsWith("/api/"));
   }
 
   const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
-  const secret = process.env.AUTH_SECRET || "";
-  const isAuthenticated = token ? await isTokenValid(token, secret) : false;
+  const authSecret = process.env.AUTH_SECRET || "";
+  const appPassword = process.env.APP_PASSWORD || "";
+
+  const isAuthenticated = token
+    ? await verifyTokenWithSecrets(token, authSecret, appPassword)
+    : false;
 
   // If user is at /login:
   if (pathname === "/login") {
     if (isAuthenticated) {
-      return NextResponse.redirect(new URL("/", request.url));
+      return applySecurityHeaders(NextResponse.redirect(new URL("/", request.url)));
     }
-    return NextResponse.next();
+    return applySecurityHeaders(NextResponse.next());
   }
 
   // All other pages and API routes require authentication
   if (!isAuthenticated) {
     if (pathname.startsWith("/api/")) {
-      return NextResponse.json(
+      const unauthorizedRes = NextResponse.json(
         {
           error: {
             code: "UNAUTHORIZED",
@@ -52,13 +54,14 @@ export async function middleware(request: NextRequest) {
         },
         { status: 401 }
       );
+      return applySecurityHeaders(unauthorizedRes, true);
     }
 
     const loginUrl = new URL("/login", request.url);
-    return NextResponse.redirect(loginUrl);
+    return applySecurityHeaders(NextResponse.redirect(loginUrl));
   }
 
-  return NextResponse.next();
+  return applySecurityHeaders(NextResponse.next(), pathname.startsWith("/api/"));
 }
 
 export const config = {

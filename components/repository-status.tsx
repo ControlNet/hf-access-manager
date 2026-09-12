@@ -165,25 +165,11 @@ export function RepositoryStatusList({ initialStatuses = [] }: RepositoryStatusL
                 </div>
 
                 {status === "connected" && (
-                  <div className="mt-4 pt-3 border-t grid grid-cols-3 gap-2 text-center text-xs">
-                    <div>
-                      <span className="block font-bold text-foreground text-sm">
-                        {pendingCount ?? 0}
-                      </span>
-                      <span className="text-muted-foreground text-[10px] uppercase">Pending</span>
-                    </div>
-                    <div>
-                      <span className="block font-bold text-foreground text-sm">
-                        {acceptedCount ?? 0}
-                      </span>
-                      <span className="text-muted-foreground text-[10px] uppercase">Accepted</span>
-                    </div>
-                    <div>
-                      <span className="block font-bold text-foreground text-sm">
-                        {rejectedCount ?? 0}
-                      </span>
-                      <span className="text-muted-foreground text-[10px] uppercase">Rejected</span>
-                    </div>
+                  <div className="mt-4 pt-3 border-t flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">Pending Requests:</span>
+                    <span className="font-bold text-foreground font-mono text-sm">
+                      {pendingCount ?? 0}
+                    </span>
                   </div>
                 )}
               </div>

@@ -61,4 +61,11 @@ describe("lib/env", () => {
 
     expect(() => getEnv()).toThrow("APP_PASSWORD must be provided");
   });
+
+  it("throws error if APP_PASSWORD is shorter than 16 characters", () => {
+    process.env.APP_PASSWORD = "short-password";
+    resetEnvCache();
+
+    expect(() => getEnv()).toThrow("APP_PASSWORD must be at least 16 characters long");
+  });
 });

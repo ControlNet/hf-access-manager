@@ -2,7 +2,7 @@
 
 > A minimal, stateless, self-hosted dashboard for delegating Hugging Face gated repository access management without sharing the repository owner's Hugging Face token.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![Next.js 15](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict-blue.svg)](https://www.typescriptlang.org/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](https://www.docker.com/)
@@ -67,7 +67,10 @@ Hugging Face Hub API (https://huggingface.co/api/...)
 - **Manual Access Granting**: Directly grant access to any Hugging Face `@username` via a quick modal dialog.
 - **Filtering & Search**: Real-time client-side search across names, usernames, emails, and custom gated form answers; filter by repository or repository type.
 - **Repository Diagnostics**: Dedicated `/repositories` page inspecting Hugging Face connectivity, gated status (`manual` vs `auto`), and request counts per repository.
-- **Shared Password Authentication**: No database, no user accounts to manage, no third-party auth lock-in. Sessions are signed via standard stateless JWT cookies (`jose`).
+- **Shared Password Authentication & Instant Invalidation**: No database, no user accounts to manage, no third-party auth lock-in. Sessions are signed via stateless JWT cookies (`jose`) with cryptographic keys derived from both `AUTH_SECRET` and `APP_PASSWORD`. Rotating `APP_PASSWORD` immediately invalidates all existing reviewer sessions across all instances without requiring external cache or database state.
+- **On-Demand Loading & Explicit Truncation**: Only Pending requests are loaded upon opening the dashboard. Accepted and Rejected histories load lazily on-demand when their tabs are visited. When requests hit pagination boundaries, the UI displays explicit truncation indicators (`500+`) with a "Load more requests" button rather than silently capping results.
+- **Race-Safe Tab Transitions**: Tab switching and unmounts utilize `AbortController` cancellation to prevent in-flight requests from overwriting the active view with stale data.
+- **Security Hardened**: Built-in anti-clickjacking (`frame-ancestors 'none'`, `X-Frame-Options: DENY`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, timing-safe password comparison, and `Cache-Control: private, no-store` on all authenticated API responses.
 - **Dark Mode Support**: Respects system theme preferences by default, with an instant toggle.
 
 ---
@@ -80,7 +83,7 @@ Configure the following variables in your deployment environment or `.env` file:
 | :--- | :---: | :---: | :--- |
 | `HF_TOKEN` | **Yes** | — | Hugging Face Access Token with `write` or `admin` permissions on the managed repositories. |
 | `HF_REPOSITORIES` | **Yes** | — | Comma-separated list of managed repositories in format `<type>:<owner>/<name>`. |
-| `APP_PASSWORD` | **Yes** | — | Shared password used by trusted reviewers to sign in. |
+| `APP_PASSWORD` | **Yes** | — | Shared password used by trusted reviewers to sign in (minimum 16 characters). |
 | `AUTH_SECRET` | **Yes** | — | Secret string (minimum 32 characters) used to sign and verify session JWT cookies. |
 | `SESSION_MAX_AGE` | No | `604800` | Session lifetime in seconds (defaults to 7 days). |
 
@@ -201,8 +204,9 @@ services:
 
 1. **Use Fine-Grained Hugging Face Tokens**:
    - Rather than using your master Hugging Face user token, create a [Fine-Grained Token](https://huggingface.co/settings/tokens) scoped specifically to the repositories you manage with **Repository permissions: write**.
-2. **Keep `APP_PASSWORD` Strong**:
-   - The shared password protects the web UI. Use a long, randomly generated passphrase.
+2. **Keep `APP_PASSWORD` Strong & Rotate When Needed**:
+   - The shared password protects the web UI and must be at least 16 characters long.
+   - When a collaborator leaves or access needs to be revoked, simply rotate `APP_PASSWORD`. All active reviewer sessions are immediately invalidated across all deployment instances without database state.
 3. **Keep `AUTH_SECRET` Private & Long**:
    - Ensure `AUTH_SECRET` is at least 32 random characters (e.g. `openssl rand -hex 32`).
 4. **HTTPS in Production**:
@@ -221,4 +225,4 @@ services:
 
 ## License
 
-This project is open source and available under the [MIT License](LICENSE).
+This project is open source and available under the [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE).

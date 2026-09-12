@@ -1,5 +1,5 @@
 import "server-only";
-import { AccessRequest, ManagedRepository, RepoType, RepositoryStatus, RequestStatus } from "./types";
+import { AccessRequest, ManagedRepository, PaginatedAccessRequests, RepoType, RepositoryStatus, RequestStatus } from "./types";
 import { getEnv } from "./env";
 
 const HF_API_BASE = "https://huggingface.co";
@@ -180,11 +180,60 @@ export function normalizeHfAccessRequest(
 /**
  * Fetches all access requests for a given repository and status with pagination support
  */
+/**
+ * Fetch wrapper with configurable timeout using AbortController.
+ * Ensures all Hugging Face GET and POST operations terminate safely without hanging indefinitely.
+ */
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs = 15000,
+  repo?: ManagedRepository
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+    return res;
+  } catch (err: unknown) {
+    if ((err as { name?: string }).name === "AbortError" || controller.signal.aborted) {
+      const repoLabel = repo ? ` for ${repo.repoId}` : "";
+      throw new HfApiError(
+        504,
+        "HF_TIMEOUT",
+        `Request to Hugging Face Hub timed out after ${Math.round(timeoutMs / 1000)}s${repoLabel}.`
+      );
+    }
+    throw new HfApiError(
+      500,
+      "HF_NETWORK_ERROR",
+      `Network error connecting to Hugging Face Hub: ${String(err)}`
+    );
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+export interface ListAccessRequestsOptions {
+  maxPages?: number;
+  tokenOverride?: string;
+  timeoutMs?: number;
+}
+
+/**
+ * Fetches access requests for a given repository and status with pagination support.
+ * Refactored to explicitly track truncation and hasMore metadata instead of silently
+ * capping results.
+ */
 export async function listAccessRequests(
   repo: ManagedRepository,
   status: RequestStatus,
-  options?: { maxPages?: number; tokenOverride?: string }
-): Promise<AccessRequest[]> {
+  options?: ListAccessRequestsOptions
+): Promise<PaginatedAccessRequests> {
   if (!isGatingSupported(repo.type)) {
     throw new HfApiError(
       400,
@@ -194,35 +243,40 @@ export async function listAccessRequests(
   }
 
   const pluralType = getPluralRepoType(repo.type);
-  const maxPages = options?.maxPages ?? 10; // Safety boundary against runaway pagination
+  // Default maxPages: for pending (primary review queue), load up to 50 pages (approx 2,500 requests);
+  // for accepted/rejected histories, load 10 pages per increment.
+  const defaultMax = status === "pending" ? 50 : 10;
+  const maxPages = options?.maxPages ?? defaultMax;
+  const timeoutMs = options?.timeoutMs ?? 15000;
   const headers = buildHfHeaders(options?.tokenOverride);
 
   let currentUrl: string | null = `${HF_API_BASE}/api/${pluralType}/${repo.repoId}/user-access-request/${status}`;
   const allRequests: AccessRequest[] = [];
   let pageCount = 0;
+  let hasMore = false;
+  let truncated = false;
+  let nextUrl: string | null = null;
 
-  while (currentUrl && pageCount < maxPages) {
+  while (currentUrl) {
+    if (pageCount >= maxPages) {
+      // Stopped because of internal safety limit, but more pages exist
+      hasMore = true;
+      truncated = true;
+      nextUrl = currentUrl;
+      break;
+    }
+
     pageCount++;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-    let res: Response;
-    try {
-      res = await fetch(currentUrl, {
+    const res = await fetchWithTimeout(
+      currentUrl,
+      {
         method: "GET",
         headers,
-        signal: controller.signal,
         cache: "no-store",
-      });
-    } catch (err: unknown) {
-      clearTimeout(timeoutId);
-      if ((err as { name?: string }).name === "AbortError") {
-        throw new HfApiError(504, "HF_TIMEOUT", `Request to Hugging Face Hub timed out for ${repo.repoId}.`);
-      }
-      throw new HfApiError(500, "HF_NETWORK_ERROR", `Network error connecting to Hugging Face Hub: ${String(err)}`);
-    } finally {
-      clearTimeout(timeoutId);
-    }
+      },
+      timeoutMs,
+      repo
+    );
 
     if (!res.ok) {
       await handleHfError(res, repo);
@@ -241,37 +295,52 @@ export async function listAccessRequests(
     currentUrl = nextLink;
   }
 
-  return allRequests;
+  return {
+    requests: allRequests,
+    hasMore,
+    truncated,
+    totalLoaded: allRequests.length,
+    nextUrl,
+  };
 }
 
 /**
  * Gets pending requests for a repository
  */
-export async function getPendingRequests(repo: ManagedRepository): Promise<AccessRequest[]> {
-  return listAccessRequests(repo, "pending");
+export async function getPendingRequests(
+  repo: ManagedRepository,
+  options?: ListAccessRequestsOptions
+): Promise<PaginatedAccessRequests> {
+  return listAccessRequests(repo, "pending", options);
 }
 
 /**
  * Gets accepted requests for a repository
  */
-export async function getAcceptedRequests(repo: ManagedRepository): Promise<AccessRequest[]> {
-  return listAccessRequests(repo, "accepted");
+export async function getAcceptedRequests(
+  repo: ManagedRepository,
+  options?: ListAccessRequestsOptions
+): Promise<PaginatedAccessRequests> {
+  return listAccessRequests(repo, "accepted", options);
 }
 
 /**
  * Gets rejected requests for a repository
  */
-export async function getRejectedRequests(repo: ManagedRepository): Promise<AccessRequest[]> {
-  return listAccessRequests(repo, "rejected");
+export async function getRejectedRequests(
+  repo: ManagedRepository,
+  options?: ListAccessRequestsOptions
+): Promise<PaginatedAccessRequests> {
+  return listAccessRequests(repo, "rejected", options);
 }
 
 /**
- * Approves a user's access request for a repository
+ * Approves a user's access request for a repository with bounded timeout
  */
 export async function approveRequest(
   repo: ManagedRepository,
   username: string,
-  options?: { tokenOverride?: string }
+  options?: { tokenOverride?: string; timeoutMs?: number }
 ): Promise<void> {
   if (!isGatingSupported(repo.type)) {
     throw new HfApiError(
@@ -284,16 +353,22 @@ export async function approveRequest(
   const pluralType = getPluralRepoType(repo.type);
   const url = `${HF_API_BASE}/api/${pluralType}/${repo.repoId}/user-access-request/handle`;
   const headers = buildHfHeaders(options?.tokenOverride);
+  const timeoutMs = options?.timeoutMs ?? 15000;
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      user: username,
-      status: "accepted",
-    }),
-    cache: "no-store",
-  });
+  const res = await fetchWithTimeout(
+    url,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        user: username,
+        status: "accepted",
+      }),
+      cache: "no-store",
+    },
+    timeoutMs,
+    repo
+  );
 
   if (!res.ok) {
     await handleHfError(res, repo);
@@ -301,12 +376,12 @@ export async function approveRequest(
 }
 
 /**
- * Rejects a user's access request for a repository (direct 1-click action without reason prompt)
+ * Rejects a user's access request for a repository with bounded timeout
  */
 export async function rejectRequest(
   repo: ManagedRepository,
   username: string,
-  options?: { tokenOverride?: string }
+  options?: { tokenOverride?: string; timeoutMs?: number }
 ): Promise<void> {
   if (!isGatingSupported(repo.type)) {
     throw new HfApiError(
@@ -319,16 +394,22 @@ export async function rejectRequest(
   const pluralType = getPluralRepoType(repo.type);
   const url = `${HF_API_BASE}/api/${pluralType}/${repo.repoId}/user-access-request/handle`;
   const headers = buildHfHeaders(options?.tokenOverride);
+  const timeoutMs = options?.timeoutMs ?? 15000;
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      user: username,
-      status: "rejected",
-    }),
-    cache: "no-store",
-  });
+  const res = await fetchWithTimeout(
+    url,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        user: username,
+        status: "rejected",
+      }),
+      cache: "no-store",
+    },
+    timeoutMs,
+    repo
+  );
 
   if (!res.ok) {
     await handleHfError(res, repo);
@@ -336,12 +417,12 @@ export async function rejectRequest(
 }
 
 /**
- * Revokes an accepted user's access by resetting their request to pending or rejected status
+ * Revokes an accepted user's access by resetting their request to pending status with bounded timeout
  */
 export async function revokeRequest(
   repo: ManagedRepository,
   username: string,
-  options?: { tokenOverride?: string }
+  options?: { tokenOverride?: string; timeoutMs?: number }
 ): Promise<void> {
   if (!isGatingSupported(repo.type)) {
     throw new HfApiError(
@@ -354,17 +435,23 @@ export async function revokeRequest(
   const pluralType = getPluralRepoType(repo.type);
   const url = `${HF_API_BASE}/api/${pluralType}/${repo.repoId}/user-access-request/handle`;
   const headers = buildHfHeaders(options?.tokenOverride);
+  const timeoutMs = options?.timeoutMs ?? 15000;
 
   // Hugging Face's cancel_access_request sets status to "pending", revoking accepted access
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      user: username,
-      status: "pending",
-    }),
-    cache: "no-store",
-  });
+  const res = await fetchWithTimeout(
+    url,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        user: username,
+        status: "pending",
+      }),
+      cache: "no-store",
+    },
+    timeoutMs,
+    repo
+  );
 
   if (!res.ok) {
     await handleHfError(res, repo);
@@ -372,12 +459,12 @@ export async function revokeRequest(
 }
 
 /**
- * Manually grants access to a Hugging Face user without requiring them to submit a prior request
+ * Manually grants access to a Hugging Face user with bounded timeout
  */
 export async function grantAccess(
   repo: ManagedRepository,
   username: string,
-  options?: { tokenOverride?: string }
+  options?: { tokenOverride?: string; timeoutMs?: number }
 ): Promise<void> {
   if (!isGatingSupported(repo.type)) {
     throw new HfApiError(
@@ -390,15 +477,21 @@ export async function grantAccess(
   const pluralType = getPluralRepoType(repo.type);
   const url = `${HF_API_BASE}/api/${pluralType}/${repo.repoId}/user-access-request/grant`;
   const headers = buildHfHeaders(options?.tokenOverride);
+  const timeoutMs = options?.timeoutMs ?? 15000;
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      user: username,
-    }),
-    cache: "no-store",
-  });
+  const res = await fetchWithTimeout(
+    url,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        user: username,
+      }),
+      cache: "no-store",
+    },
+    timeoutMs,
+    repo
+  );
 
   if (!res.ok) {
     await handleHfError(res, repo);
@@ -426,11 +519,16 @@ export async function checkRepositoryStatus(
   try {
     // 1. Fetch metadata info
     const infoUrl = `${HF_API_BASE}/api/${pluralType}/${repo.repoId}`;
-    const infoRes = await fetch(infoUrl, {
-      method: "GET",
-      headers,
-      cache: "no-store",
-    });
+    const infoRes = await fetchWithTimeout(
+      infoUrl,
+      {
+        method: "GET",
+        headers,
+        cache: "no-store",
+      },
+      15000,
+      repo
+    );
 
     if (!infoRes.ok) {
       await handleHfError(infoRes, repo);
@@ -446,17 +544,13 @@ export async function checkRepositoryStatus(
       gated = "manual";
     }
 
-    // 2. Fetch pending count
-    const pendingList = await getPendingRequests(repo);
-    const acceptedList = await getAcceptedRequests(repo).catch(() => []);
-    const rejectedList = await getRejectedRequests(repo).catch(() => []);
+    // 2. Fetch pending count (bounded to 1 page for speed and lightweight check)
+    const pendingResult = await getPendingRequests(repo, { maxPages: 1 });
 
     return {
       repository: repo,
       status: "connected",
-      pendingCount: pendingList.length,
-      acceptedCount: acceptedList.length,
-      rejectedCount: rejectedList.length,
+      pendingCount: pendingResult.totalLoaded,
       gated,
       isPrivate,
     };

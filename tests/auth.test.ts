@@ -62,11 +62,27 @@ describe("lib/auth", () => {
 
     it("rejects token signed with different secret", async () => {
       const token = await createSessionToken();
-      const isValid = await verifySessionToken(
-        token,
-        "different-secret-that-is-at-least-32-characters-long"
-      );
+      const isValid = await verifySessionToken(token, {
+        authSecret: "different-secret-that-is-at-least-32-characters-long",
+      });
       expect(isValid).toBe(false);
+    });
+
+    it("invalidates existing session tokens when APP_PASSWORD is rotated", async () => {
+      const passwordA = "original-reviewer-passphrase-16c";
+      const passwordB = "new-rotated-passphrase-16chars";
+
+      // 1. Token signed with Password A
+      const tokenA = await createSessionToken({ appPassword: passwordA });
+      expect(await verifySessionToken(tokenA, { appPassword: passwordA })).toBe(true);
+
+      // 2. The same token fails immediately when password is changed to Password B
+      expect(await verifySessionToken(tokenA, { appPassword: passwordB })).toBe(false);
+
+      // 3. New token signed with Password B validates normally
+      const tokenB = await createSessionToken({ appPassword: passwordB });
+      expect(await verifySessionToken(tokenB, { appPassword: passwordB })).toBe(true);
+      expect(await verifySessionToken(tokenB, { appPassword: passwordA })).toBe(false);
     });
 
     it("rejects empty or garbage token", async () => {

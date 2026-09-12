@@ -3,7 +3,9 @@ import { SignJWT, jwtVerify } from "jose";
 import { createHash, timingSafeEqual } from "crypto";
 import { getEnv } from "./env";
 
-export const SESSION_COOKIE_NAME = "hf_access_session";
+import { deriveSessionKey, verifyTokenWithSecrets, SESSION_COOKIE_NAME } from "./session-key";
+
+export { SESSION_COOKIE_NAME } from "./session-key";
 
 /**
  * Perform timing-safe comparison of password against configured APP_PASSWORD
@@ -21,18 +23,18 @@ export function verifyPassword(inputPassword: string, expectedPassword: string):
 }
 
 /**
- * Returns Uint8Array key suitable for jose HMAC operations
+ * Signs a new session JWT using key derived from authSecret and appPassword
  */
-function getJwtSecretKey(secret: string): Uint8Array {
-  return new TextEncoder().encode(secret);
-}
+export async function createSessionToken(options?: {
+  authSecret?: string;
+  appPassword?: string;
+}): Promise<string> {
+  const env = getEnv();
+  const authSecret = options?.authSecret ?? env.authSecret;
+  const appPassword = options?.appPassword ?? env.appPassword;
+  const sessionMaxAge = env.sessionMaxAge;
 
-/**
- * Signs a new session JWT
- */
-export async function createSessionToken(): Promise<string> {
-  const { authSecret, sessionMaxAge } = getEnv();
-  const key = getJwtSecretKey(authSecret);
+  const key = await deriveSessionKey(authSecret, appPassword);
 
   const token = await new SignJWT({ authenticated: true })
     .setProtectedHeader({ alg: "HS256" })
@@ -44,25 +46,17 @@ export async function createSessionToken(): Promise<string> {
 }
 
 /**
- * Verifies a session JWT and returns true if valid
+ * Verifies a session JWT using key derived from authSecret and appPassword
  */
-export async function verifySessionToken(token: string, secretOverride?: string): Promise<boolean> {
-  if (!token || typeof token !== "string") {
-    return false;
-  }
+export async function verifySessionToken(
+  token: string,
+  options?: { authSecret?: string; appPassword?: string }
+): Promise<boolean> {
+  const env = getEnv();
+  const authSecret = options?.authSecret ?? env.authSecret;
+  const appPassword = options?.appPassword ?? env.appPassword;
 
-  try {
-    const secret = secretOverride ?? getEnv().authSecret;
-    const key = getJwtSecretKey(secret);
-
-    const { payload } = await jwtVerify(token, key, {
-      algorithms: ["HS256"],
-    });
-
-    return payload.authenticated === true;
-  } catch {
-    return false;
-  }
+  return verifyTokenWithSecrets(token, authSecret, appPassword);
 }
 
 /**

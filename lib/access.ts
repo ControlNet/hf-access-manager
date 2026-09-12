@@ -26,6 +26,8 @@ export interface AggregateRequestsResult {
   }>;
   totalRepos: number;
   successfulRepos: number;
+  hasMore: boolean;
+  truncated: boolean;
 }
 
 /**
@@ -52,46 +54,56 @@ export async function mapConcurrent<T, R>(
 }
 
 /**
- * Fetches requests for a single repository for a given status or all statuses
+ * Fetches requests for a single repository for a given status
  */
 async function fetchRepoRequests(
   repo: ManagedRepository,
-  status: RequestStatus
-): Promise<AccessRequest[]> {
+  status: RequestStatus,
+  options?: { maxPages?: number }
+) {
   if (!isGatingSupported(repo.type)) {
-    return [];
+    return { requests: [], hasMore: false, truncated: false, totalLoaded: 0 };
   }
 
   switch (status) {
     case "pending":
-      return await getPendingRequests(repo);
+      return await getPendingRequests(repo, options);
     case "accepted":
-      return await getAcceptedRequests(repo);
+      return await getAcceptedRequests(repo, options);
     case "rejected":
-      return await getRejectedRequests(repo);
+      return await getRejectedRequests(repo, options);
     default:
-      return [];
+      return { requests: [], hasMore: false, truncated: false, totalLoaded: 0 };
   }
 }
 
 /**
  * Aggregates access requests across all configured repositories with failure isolation.
  * Uses Promise.allSettled so a failure on one repository will never break the rest of the inbox.
+ * Explicitly records whether any repository had its results truncated by pagination boundaries.
  */
 export async function aggregateRequests(
   repositories: ManagedRepository[],
-  status: RequestStatus
+  status: RequestStatus,
+  options?: { maxPages?: number }
 ): Promise<AggregateRequestsResult> {
   const errors: AggregateRequestsResult["errors"] = [];
   const allRequests: AccessRequest[] = [];
+  let overallHasMore = false;
+  let overallTruncated = false;
 
   const results = await Promise.allSettled(
     repositories.map(async (repo) => {
       if (!isGatingSupported(repo.type)) {
-        return { repo, requests: [] };
+        return { repo, requests: [], hasMore: false, truncated: false };
       }
-      const list = await fetchRepoRequests(repo, status);
-      return { repo, requests: list };
+      const paginated = await fetchRepoRequests(repo, status, options);
+      return {
+        repo,
+        requests: paginated.requests,
+        hasMore: paginated.hasMore,
+        truncated: paginated.truncated,
+      };
     })
   );
 
@@ -104,6 +116,8 @@ export async function aggregateRequests(
     if (result.status === "fulfilled") {
       successfulRepos++;
       allRequests.push(...result.value.requests);
+      if (result.value.hasMore) overallHasMore = true;
+      if (result.value.truncated) overallTruncated = true;
     } else {
       const reason = result.reason;
       const errorMsg = reason instanceof Error ? reason.message : String(reason);
@@ -129,6 +143,8 @@ export async function aggregateRequests(
     errors,
     totalRepos: repositories.length,
     successfulRepos,
+    hasMore: overallHasMore,
+    truncated: overallTruncated,
   };
 }
 
@@ -156,7 +172,15 @@ export async function aggregateRepositoriesStatus(
 }
 
 /**
- * Executes bulk approve action across multiple requests with concurrency limit (e.g. 5)
+ * Generates canonical composite key for a bulk action item
+ */
+export function getBulkItemKey(item: BulkActionItem): string {
+  return item.id || `${item.repo.type}:${item.repo.repoId}:${item.username}`;
+}
+
+/**
+ * Executes bulk approve action across multiple requests with concurrency limit (e.g. 5).
+ * Preserves exact composite identity (repo + username) for partial failure handling.
  */
 export async function executeBulkApprove(
   items: BulkActionItem[],
@@ -166,12 +190,17 @@ export async function executeBulkApprove(
   let succeeded = 0;
 
   await mapConcurrent(items, concurrency, async (item) => {
+    const itemKey = getBulkItemKey(item);
     try {
       await approveRequest(item.repo, item.username);
       succeeded++;
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      errors.push({ item, error: errorMsg });
+      errors.push({
+        id: itemKey,
+        item,
+        error: errorMsg,
+      });
     }
   });
 
@@ -184,7 +213,8 @@ export async function executeBulkApprove(
 }
 
 /**
- * Executes bulk reject action across multiple requests with concurrency limit (e.g. 5)
+ * Executes bulk reject action across multiple requests with concurrency limit (e.g. 5).
+ * Preserves exact composite identity (repo + username) for partial failure handling.
  */
 export async function executeBulkReject(
   items: BulkActionItem[],
@@ -194,12 +224,17 @@ export async function executeBulkReject(
   let succeeded = 0;
 
   await mapConcurrent(items, concurrency, async (item) => {
+    const itemKey = getBulkItemKey(item);
     try {
       await rejectRequest(item.repo, item.username);
       succeeded++;
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      errors.push({ item, error: errorMsg });
+      errors.push({
+        id: itemKey,
+        item,
+        error: errorMsg,
+      });
     }
   });
 

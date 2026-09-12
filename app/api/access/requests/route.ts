@@ -15,12 +15,18 @@ export async function GET(request: NextRequest) {
       ? (statusParam as RequestStatus)
       : "pending";
 
-    const { hfRepositories } = getEnv();
-    const result = await aggregateRequests(hfRepositories, status);
+    const maxPagesParam = searchParams.get("maxPages");
+    const parsedMax = maxPagesParam ? parseInt(maxPagesParam, 10) : undefined;
+    const maxPages = parsedMax && !isNaN(parsedMax) && parsedMax > 0 ? parsedMax : undefined;
 
-    return NextResponse.json({
+    const { hfRepositories } = getEnv();
+    const result = await aggregateRequests(hfRepositories, status, { maxPages });
+
+    const response = NextResponse.json({
       data: result,
     });
+    response.headers.set("Cache-Control", "private, no-store, max-age=0, must-revalidate");
+    return response;
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to fetch access requests";
     return NextResponse.json(

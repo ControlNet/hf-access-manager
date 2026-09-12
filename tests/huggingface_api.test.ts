@@ -27,7 +27,7 @@ describe("lib/huggingface network operations (mocked)", () => {
       ...originalEnv,
       HF_TOKEN: "hf_mock_token_12345",
       HF_REPOSITORIES: "model:meta-llama/Llama-2-7b,space:owner/example-space",
-      APP_PASSWORD: "test-password",
+      APP_PASSWORD: "test-password-16chars",
       AUTH_SECRET: "1234567890123456789012345678901234567890",
     };
     resetEnvCache();
@@ -77,11 +77,13 @@ describe("lib/huggingface network operations (mocked)", () => {
 
     vi.stubGlobal("fetch", mockFetch);
 
-    const requests = await getPendingRequests(modelRepo);
+    const result = await getPendingRequests(modelRepo);
 
-    expect(requests).toHaveLength(2);
-    expect(requests[0].username).toBe("alice");
-    expect(requests[1].username).toBe("bob");
+    expect(result.requests).toHaveLength(2);
+    expect(result.requests[0].username).toBe("alice");
+    expect(result.requests[1].username).toBe("bob");
+    expect(result.hasMore).toBe(false);
+    expect(result.truncated).toBe(false);
     expect(mockFetch).toHaveBeenCalledTimes(2);
 
     const firstCallHeaders = mockFetch.mock.calls[0][1].headers;
@@ -189,4 +191,49 @@ describe("lib/huggingface network operations (mocked)", () => {
       "Insufficient permissions for repository meta-llama/Llama-2-7b"
     );
   });
+
+  it("marks result as truncated and hasMore when pagination hits maxPages limit", async () => {
+    const page1Data = [
+      {
+        user: { user: "alice", fullname: "Alice" },
+        status: "pending",
+        timestamp: "2026-09-12T10:00:00Z",
+      },
+    ];
+
+    const mockFetch = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify(page1Data), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          Link: '<https://huggingface.co/api/models/meta-llama/Llama-2-7b/user-access-request/pending?page=2>; rel="next"',
+        },
+      })
+    );
+    vi.stubGlobal("fetch", mockFetch);
+
+    const result = await getPendingRequests(modelRepo, { maxPages: 1 });
+
+    expect(result.requests).toHaveLength(1);
+    expect(result.truncated).toBe(true);
+    expect(result.hasMore).toBe(true);
+    expect(result.nextUrl).toBe(
+      "https://huggingface.co/api/models/meta-llama/Llama-2-7b/user-access-request/pending?page=2"
+    );
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws HfApiError with HF_TIMEOUT on fetch abort/timeout", async () => {
+    const abortError = new Error("The operation was aborted");
+    abortError.name = "AbortError";
+
+    const mockFetch = vi.fn().mockRejectedValue(abortError);
+    vi.stubGlobal("fetch", mockFetch);
+
+    await expect(approveRequest(modelRepo, "alice")).rejects.toMatchObject({
+      statusCode: 504,
+      code: "HF_TIMEOUT",
+    });
+  });
 });
+

@@ -12,7 +12,7 @@ const envSchema = z.object({
     .min(1, "HF_REPOSITORIES must be provided"),
   APP_PASSWORD: z
     .string({ required_error: "APP_PASSWORD must be provided" })
-    .min(1, "APP_PASSWORD must be provided"),
+    .min(16, "APP_PASSWORD must be at least 16 characters long"),
   AUTH_SECRET: z
     .string({ required_error: "AUTH_SECRET must be provided" })
     .min(32, "AUTH_SECRET must be at least 32 characters long"),

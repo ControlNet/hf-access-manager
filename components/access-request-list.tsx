@@ -3,11 +3,9 @@
 import * as React from "react";
 import {
   Inbox,
-  CheckCircle2,
-  XCircle,
   AlertTriangle,
-  RotateCcw,
   Sparkles,
+  Loader2,
 } from "lucide-react";
 import { AccessRequest, ManagedRepository, RequestStatus } from "@/lib/types";
 import { AccessRequestRow } from "./access-request-row";
@@ -18,12 +16,18 @@ import { GrantAccessDialog } from "./grant-access-dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import Link from "next/link";
 
 interface AccessRequestListProps {
   configuredRepositories: ManagedRepository[];
   initialStatus?: RequestStatus;
+}
+
+interface TabCountState {
+  count: number;
+  isTruncated: boolean;
 }
 
 export function AccessRequestList({
@@ -33,6 +37,9 @@ export function AccessRequestList({
   const [currentTab, setCurrentTab] = React.useState<RequestStatus>(initialStatus);
   const [requests, setRequests] = React.useState<AccessRequest[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
+  const [isLoadingMore, setIsLoadingMore] = React.useState(false);
+  const [hasMore, setHasMore] = React.useState(false);
+  const [currentMaxPages, setCurrentMaxPages] = React.useState<number>(10);
   const [repoErrors, setRepoErrors] = React.useState<
     Array<{ repo: ManagedRepository; error: string; code?: string }>
   >([]);
@@ -54,23 +61,44 @@ export function AccessRequestList({
   const [selectedRepoKey, setSelectedRepoKey] = React.useState("all");
   const [selectedType, setSelectedType] = React.useState("all");
 
-  // Tab count caches
+  // Tab counts cache: only populated after a tab has actually been loaded
   const [tabCounts, setTabCounts] = React.useState<{
-    pending?: number;
-    accepted?: number;
-    rejected?: number;
+    pending?: TabCountState;
+    accepted?: TabCountState;
+    rejected?: TabCountState;
   }>({});
 
   // Pending counts by repository key for the dropdown badges
   const [repoPendingCounts, setRepoPendingCounts] = React.useState<Record<string, number>>({});
 
-  // Fetch requests for active tab
+  // AbortController ref to cancel in-flight fetches on rapid tab switching or unmount
+  const activeAbortControllerRef = React.useRef<AbortController | null>(null);
+
+  // Fetch requests for active tab with AbortController race prevention
   const fetchTabRequests = React.useCallback(
-    async (statusToFetch: RequestStatus) => {
+    async (statusToFetch: RequestStatus, pagesLimit?: number, isAppending = false) => {
+      // Abort any pending active fetch
+      if (activeAbortControllerRef.current) {
+        activeAbortControllerRef.current.abort();
+      }
+      const controller = new AbortController();
+      activeAbortControllerRef.current = controller;
+
       try {
-        setIsLoading(true);
-        const res = await fetch(`/api/access/requests?status=${statusToFetch}`, {
+        if (isAppending) {
+          setIsLoadingMore(true);
+        } else {
+          setIsLoading(true);
+        }
+
+        const queryParams = new URLSearchParams({ status: statusToFetch });
+        if (pagesLimit) {
+          queryParams.set("maxPages", String(pagesLimit));
+        }
+
+        const res = await fetch(`/api/access/requests?${queryParams.toString()}`, {
           cache: "no-store",
+          signal: controller.signal,
         });
 
         if (!res.ok) {
@@ -80,14 +108,23 @@ export function AccessRequestList({
         const json = await res.json();
         const data = json.data;
 
+        // Check if aborted before updating state
+        if (controller.signal.aborted) {
+          return;
+        }
+
         const fetchedList: AccessRequest[] = data.requests || [];
         setRequests(fetchedList);
         setRepoErrors(data.errors || []);
+        setHasMore(Boolean(data.hasMore));
 
-        // Update count for current tab
+        // Update count for current tab with truncation indicator
         setTabCounts((prev) => ({
           ...prev,
-          [statusToFetch]: fetchedList.length,
+          [statusToFetch]: {
+            count: fetchedList.length,
+            isTruncated: Boolean(data.truncated || data.hasMore),
+          },
         }));
 
         // If fetching pending, calculate per-repo pending counts
@@ -100,59 +137,56 @@ export function AccessRequestList({
           setRepoPendingCounts(counts);
         }
 
-        // Clear selection on tab switch
-        setSelectedIds(new Set());
-      } catch (err) {
+        // Clear bulk selection on tab switch or reload
+        if (!isAppending) {
+          setSelectedIds(new Set());
+        }
+      } catch (err: unknown) {
+        if ((err as { name?: string }).name === "AbortError" || controller.signal.aborted) {
+          // Ignore clean user-driven aborts
+          return;
+        }
         const msg = err instanceof Error ? err.message : "Network error loading requests";
         toast.error(msg);
       } finally {
-        setIsLoading(false);
+        if (!controller.signal.aborted) {
+          setIsLoading(false);
+          setIsLoadingMore(false);
+        }
       }
     },
     []
   );
 
-  // Fetch counts for other tabs in the background
-  const fetchBackgroundCounts = React.useCallback(async () => {
-    const statuses: RequestStatus[] = ["pending", "accepted", "rejected"];
-    for (const status of statuses) {
-      try {
-        const res = await fetch(`/api/access/requests?status=${status}`, {
-          cache: "no-store",
-        });
-        if (res.ok) {
-          const json = await res.json();
-          const list: AccessRequest[] = json.data?.requests || [];
-          setTabCounts((prev) => ({
-            ...prev,
-            [status]: list.length,
-          }));
-
-          if (status === "pending") {
-            const counts: Record<string, number> = {};
-            for (const req of list) {
-              const key = `${req.repository.type}:${req.repository.repoId}`;
-              counts[key] = (counts[key] || 0) + 1;
-            }
-            setRepoPendingCounts(counts);
-          }
-        }
-      } catch {
-        // Ignore background count errors
+  // Clean up abort controller on unmount
+  React.useEffect(() => {
+    return () => {
+      if (activeAbortControllerRef.current) {
+        activeAbortControllerRef.current.abort();
       }
-    }
+    };
   }, []);
 
+  // Fetch only the active tab on mount or tab change (no eager background count loading!)
   React.useEffect(() => {
-    fetchTabRequests(currentTab);
-    fetchBackgroundCounts();
-  }, [currentTab, fetchTabRequests, fetchBackgroundCounts]);
+    const defaultPages = currentTab === "pending" ? 50 : 10;
+    setCurrentMaxPages(defaultPages);
+    fetchTabRequests(currentTab, defaultPages);
+  }, [currentTab, fetchTabRequests]);
 
   // Handle Tab Switch
   const handleTabChange = (val: string) => {
     const newStatus = val as RequestStatus;
+    if (newStatus === currentTab) return;
     setCurrentTab(newStatus);
     setSelectedIds(new Set());
+  };
+
+  // Handle Load More (incremental pagination for large histories)
+  const handleLoadMore = () => {
+    const nextPages = currentMaxPages + 10;
+    setCurrentMaxPages(nextPages);
+    fetchTabRequests(currentTab, nextPages, true);
   };
 
   // Filtered requests based on search query, repo, and type
@@ -179,7 +213,6 @@ export function AccessRequestList({
         const matchEmail = req.email ? req.email.toLowerCase().includes(q) : false;
         const matchRepo = req.repository.repoId.toLowerCase().includes(q);
 
-        // Also search in custom form fields
         let matchFields = false;
         if (req.fields) {
           for (const val of Object.values(req.fields)) {
@@ -249,12 +282,40 @@ export function AccessRequestList({
         return next;
       });
 
-      // Update counts
-      setTabCounts((prev) => ({
-        ...prev,
-        pending: Math.max(0, (prev.pending || 1) - 1),
-        accepted: (prev.accepted || 0) + 1,
-      }));
+      // Update per-repo pending count if on pending tab
+      if (currentTab === "pending") {
+        const key = `${request.repository.type}:${request.repository.repoId}`;
+        setRepoPendingCounts((prev) => ({
+          ...prev,
+          [key]: Math.max(0, (prev[key] || 1) - 1),
+        }));
+      }
+
+      // Conservative tab count updates:
+      // If approving from Pending: Pending - 1, Accepted + 1 (only if known)
+      // If approving from Rejected: Rejected - 1, Accepted + 1 (only if known)
+      setTabCounts((prev) => {
+        const next = { ...prev };
+        if (currentTab === "pending" && prev.pending !== undefined) {
+          next.pending = {
+            ...prev.pending,
+            count: Math.max(0, prev.pending.count - 1),
+          };
+        } else if (currentTab === "rejected" && prev.rejected !== undefined) {
+          next.rejected = {
+            ...prev.rejected,
+            count: Math.max(0, prev.rejected.count - 1),
+          };
+        }
+
+        if (prev.accepted !== undefined) {
+          next.accepted = {
+            ...prev.accepted,
+            count: prev.accepted.count + 1,
+          };
+        }
+        return next;
+      });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Approval failed");
     } finally {
@@ -289,12 +350,33 @@ export function AccessRequestList({
         return next;
       });
 
-      // Update counts
-      setTabCounts((prev) => ({
-        ...prev,
-        pending: Math.max(0, (prev.pending || 1) - 1),
-        rejected: (prev.rejected || 0) + 1,
-      }));
+      // Update per-repo pending count
+      if (currentTab === "pending") {
+        const key = `${request.repository.type}:${request.repository.repoId}`;
+        setRepoPendingCounts((prev) => ({
+          ...prev,
+          [key]: Math.max(0, (prev[key] || 1) - 1),
+        }));
+      }
+
+      // Conservative tab count update:
+      // Pending - 1, Rejected + 1 (if known)
+      setTabCounts((prev) => {
+        const next = { ...prev };
+        if (currentTab === "pending" && prev.pending !== undefined) {
+          next.pending = {
+            ...prev.pending,
+            count: Math.max(0, prev.pending.count - 1),
+          };
+        }
+        if (prev.rejected !== undefined) {
+          next.rejected = {
+            ...prev.rejected,
+            count: prev.rejected.count + 1,
+          };
+        }
+        return next;
+      });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Rejection failed");
     } finally {
@@ -323,10 +405,25 @@ export function AccessRequestList({
 
       // Update local state
       setRequests((prev) => prev.filter((r) => r.id !== request.id));
-      setTabCounts((prev) => ({
-        ...prev,
-        accepted: Math.max(0, (prev.accepted || 1) - 1),
-      }));
+
+      // Conservative tab count update:
+      // Revoking resets user to pending: Accepted - 1, Pending + 1 (if known)
+      setTabCounts((prev) => {
+        const next = { ...prev };
+        if (prev.accepted !== undefined) {
+          next.accepted = {
+            ...prev.accepted,
+            count: Math.max(0, prev.accepted.count - 1),
+          };
+        }
+        if (prev.pending !== undefined) {
+          next.pending = {
+            ...prev.pending,
+            count: prev.pending.count + 1,
+          };
+        }
+        return next;
+      });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Revoke failed");
     } finally {
@@ -344,6 +441,7 @@ export function AccessRequestList({
       setBulkActionInProgress("approve");
 
       const items = selectedRequests.map((r) => ({
+        id: r.id,
         repo: r.repository,
         username: r.username,
       }));
@@ -364,33 +462,45 @@ export function AccessRequestList({
         toast.success(`Successfully approved ${result.succeeded} requests.`);
       } else {
         toast.warning(
-          `${result.succeeded} approved, ${result.failed} failed. See failed items retained in list.`
+          `${result.succeeded} approved, ${result.failed} failed. Retained failed items in selection.`
         );
       }
 
-      // Filter out successfully approved items
-      const failedUsernames = new Set(
-        result.errors.map((e: { item: { username: string } }) => e.item.username)
-      );
+      // Use exact composite key (id) for partial failure identification
+      const failedIds = new Set(result.errors.map((e: { id: string }) => e.id));
 
       setRequests((prev) =>
-        prev.filter((r) => !selectedIds.has(r.id) || failedUsernames.has(r.username))
+        prev.filter((r) => !selectedIds.has(r.id) || failedIds.has(r.id))
       );
 
-      // Retain only failed in selection
+      // Retain only failed requests in selection
       setSelectedIds((prev) => {
         const next = new Set<string>();
         for (const id of prev) {
-          const req = selectedRequests.find((r) => r.id === id);
-          if (req && failedUsernames.has(req.username)) {
+          if (failedIds.has(id)) {
             next.add(id);
           }
         }
         return next;
       });
 
-      // Refresh counts
-      fetchBackgroundCounts();
+      // Update tab counts conservatively
+      setTabCounts((prev) => {
+        const next = { ...prev };
+        if (prev.pending !== undefined) {
+          next.pending = {
+            ...prev.pending,
+            count: Math.max(0, prev.pending.count - result.succeeded),
+          };
+        }
+        if (prev.accepted !== undefined) {
+          next.accepted = {
+            ...prev.accepted,
+            count: prev.accepted.count + result.succeeded,
+          };
+        }
+        return next;
+      });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Bulk approval encountered an error");
     } finally {
@@ -408,6 +518,7 @@ export function AccessRequestList({
       setBulkActionInProgress("reject");
 
       const items = selectedRequests.map((r) => ({
+        id: r.id,
         repo: r.repository,
         username: r.username,
       }));
@@ -428,30 +539,44 @@ export function AccessRequestList({
         toast.success(`Successfully rejected ${result.succeeded} requests.`);
       } else {
         toast.warning(
-          `${result.succeeded} rejected, ${result.failed} failed. See failed items retained in list.`
+          `${result.succeeded} rejected, ${result.failed} failed. Retained failed items in selection.`
         );
       }
 
-      const failedUsernames = new Set(
-        result.errors.map((e: { item: { username: string } }) => e.item.username)
-      );
+      // Use exact composite key (id) for partial failure identification
+      const failedIds = new Set(result.errors.map((e: { id: string }) => e.id));
 
       setRequests((prev) =>
-        prev.filter((r) => !selectedIds.has(r.id) || failedUsernames.has(r.username))
+        prev.filter((r) => !selectedIds.has(r.id) || failedIds.has(r.id))
       );
 
       setSelectedIds((prev) => {
         const next = new Set<string>();
         for (const id of prev) {
-          const req = selectedRequests.find((r) => r.id === id);
-          if (req && failedUsernames.has(req.username)) {
+          if (failedIds.has(id)) {
             next.add(id);
           }
         }
         return next;
       });
 
-      fetchBackgroundCounts();
+      // Update tab counts conservatively
+      setTabCounts((prev) => {
+        const next = { ...prev };
+        if (prev.pending !== undefined) {
+          next.pending = {
+            ...prev.pending,
+            count: Math.max(0, prev.pending.count - result.succeeded),
+          };
+        }
+        if (prev.rejected !== undefined) {
+          next.rejected = {
+            ...prev.rejected,
+            count: prev.rejected.count + result.succeeded,
+          };
+        }
+        return next;
+      });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Bulk rejection encountered an error");
     } finally {
@@ -488,36 +613,39 @@ export function AccessRequestList({
           <TabsList className="grid w-full grid-cols-3 sm:w-auto">
             <TabsTrigger value="pending" className="gap-2 text-xs sm:text-sm">
               <span>Pending</span>
-              {typeof tabCounts.pending === "number" && (
+              {tabCounts.pending !== undefined && (
                 <Badge
-                  variant={tabCounts.pending > 0 ? "default" : "secondary"}
+                  variant={tabCounts.pending.count > 0 ? "default" : "secondary"}
                   className="px-1.5 py-0 text-[11px] font-mono h-4 min-w-4 flex items-center justify-center rounded-full"
                 >
-                  {tabCounts.pending}
+                  {tabCounts.pending.count}
+                  {tabCounts.pending.isTruncated ? "+" : ""}
                 </Badge>
               )}
             </TabsTrigger>
 
             <TabsTrigger value="accepted" className="gap-2 text-xs sm:text-sm">
               <span>Accepted</span>
-              {typeof tabCounts.accepted === "number" && (
+              {tabCounts.accepted !== undefined && (
                 <Badge
                   variant="secondary"
                   className="px-1.5 py-0 text-[11px] font-mono h-4 min-w-4 flex items-center justify-center rounded-full"
                 >
-                  {tabCounts.accepted}
+                  {tabCounts.accepted.count}
+                  {tabCounts.accepted.isTruncated ? "+" : ""}
                 </Badge>
               )}
             </TabsTrigger>
 
             <TabsTrigger value="rejected" className="gap-2 text-xs sm:text-sm">
               <span>Rejected</span>
-              {typeof tabCounts.rejected === "number" && (
+              {tabCounts.rejected !== undefined && (
                 <Badge
                   variant="secondary"
                   className="px-1.5 py-0 text-[11px] font-mono h-4 min-w-4 flex items-center justify-center rounded-full"
                 >
-                  {tabCounts.rejected}
+                  {tabCounts.rejected.count}
+                  {tabCounts.rejected.isTruncated ? "+" : ""}
                 </Badge>
               )}
             </TabsTrigger>
@@ -528,8 +656,21 @@ export function AccessRequestList({
           <GrantAccessDialog
             repositories={configuredRepositories}
             onGranted={() => {
-              fetchTabRequests(currentTab);
-              fetchBackgroundCounts();
+              // Refresh active tab
+              fetchTabRequests(currentTab, currentMaxPages);
+              // Optimistically update accepted count if known
+              setTabCounts((prev) => {
+                if (prev.accepted !== undefined) {
+                  return {
+                    ...prev,
+                    accepted: {
+                      ...prev.accepted,
+                      count: prev.accepted.count + 1,
+                    },
+                  };
+                }
+                return prev;
+              });
             }}
           />
         </div>
@@ -609,6 +750,31 @@ export function AccessRequestList({
                 isMutating={isMutating}
               />
             ))}
+          </div>
+        )}
+
+        {/* Truncation / Load More Indicator */}
+        {hasMore && (
+          <div className="flex flex-col sm:flex-row items-center justify-between border-t bg-muted/20 px-4 py-3 text-xs text-muted-foreground gap-2">
+            <span>
+              Showing first {requests.length} requests (more {currentTab} requests are available on Hugging Face Hub).
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleLoadMore}
+              disabled={isLoadingMore}
+              className="h-7 text-xs"
+            >
+              {isLoadingMore ? (
+                <>
+                  <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                  Loading...
+                </>
+              ) : (
+                "Load more requests"
+              )}
+            </Button>
           </div>
         )}
       </div>

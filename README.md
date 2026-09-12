@@ -3,6 +3,7 @@
 > A minimal, stateless, self-hosted dashboard for delegating Hugging Face gated repository access management without sharing the repository owner's Hugging Face token.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+[![CI](https://github.com/ControlNet/hf-access-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/ControlNet/hf-access-manager/actions)
 [![Next.js 15](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict-blue.svg)](https://www.typescriptlang.org/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](https://www.docker.com/)
@@ -24,7 +25,7 @@ The application is:
 - **Unified Review Inbox**: Aggregates requests across multiple models and datasets into a single queue.
 - **Zero-Friction Review Flow**: Direct 1-click approvals and 1-click rejections without unnecessary confirmation prompts.
 - **Fail-Safe & Isolated**: A failure or rate limit on one repository never interrupts management of the others.
-- **Production-Ready**: Deployable to Vercel in 60 seconds or self-hostable using Docker.
+- **Deployable Anywhere**: Deployable to Vercel in 60 seconds or self-hostable using Docker.
 
 ---
 
@@ -61,14 +62,15 @@ Hugging Face Hub API (https://huggingface.co/api/...)
 - **One-Click Actions**:
   - **Approve**: Instant approval with immediate optimistic UI update.
   - **Reject**: 1-click rejection without dialogue or justification prompts. Mistakes can be undone anytime from the *Rejected* tab.
-- **Bulk Actions**: Check multiple pending requests to bulk-approve or bulk-reject concurrently (with rate-limiting safety).
+- **Bulk Actions**: Check multiple pending requests to bulk-approve or bulk-reject concurrently (with per-repository error isolation and rate-limiting safety).
 - **Dynamic Gated Form Rendering**: Automatically parses and displays arbitrary gated questions (affiliation, supervisor, country, intended use case, terms) without requiring code changes if questions are updated.
 - **Accepted & Rejected History**: Browse past reviewers, revoke accepted access if needed, or re-approve previously rejected candidates.
 - **Manual Access Granting**: Directly grant access to any Hugging Face `@username` via a quick modal dialog.
 - **Filtering & Search**: Real-time client-side search across names, usernames, emails, and custom gated form answers; filter by repository or repository type.
-- **Repository Diagnostics**: Dedicated `/repositories` page inspecting Hugging Face connectivity, gated status (`manual` vs `auto`), and request counts per repository.
+- **Repository Diagnostics**: Dedicated `/repositories` page inspecting Hugging Face connectivity, gated status (`manual` vs `auto`), and request counts per repository (with explicit `+` truncation indicators).
 - **Shared Password Authentication & Instant Invalidation**: No database, no user accounts to manage, no third-party auth lock-in. Sessions are signed via stateless JWT cookies (`jose`) with cryptographic keys derived from both `AUTH_SECRET` and `APP_PASSWORD`. Rotating `APP_PASSWORD` immediately invalidates all existing reviewer sessions across all instances without requiring external cache or database state.
-- **On-Demand Loading & Explicit Truncation**: Only Pending requests are loaded upon opening the dashboard. Accepted and Rejected histories load lazily on-demand when their tabs are visited. When requests hit pagination boundaries, the UI displays explicit truncation indicators (`500+`) with a "Load more requests" button rather than silently capping results.
+- **On-Demand Loading & Explicit Truncation**: Only Pending requests are loaded upon opening the dashboard. Accepted and Rejected histories load on-demand when their tabs are visited. Navigating back to a tab performs a fresh read from Hugging Face Hub so reviewer state stays in sync. When requests reach pagination limits, the UI displays explicit truncation indicators (`500+`) and a "Load more requests" button that expands the bounded history window rather than silently capping results.
+- **Context-Preserving Refresh**: The global refresh button triggers a fresh fetch of the active tab while preserving your current tab, repository filters, and search query.
 - **Race-Safe Tab Transitions**: Tab switching and unmounts utilize `AbortController` cancellation to prevent in-flight requests from overwriting the active view with stale data.
 - **Security Hardened**: Built-in anti-clickjacking (`frame-ancestors 'none'`, `X-Frame-Options: DENY`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, timing-safe password comparison, and `Cache-Control: private, no-store` on all authenticated API responses.
 - **Dark Mode Support**: Respects system theme preferences by default, with an instant toggle.
@@ -156,6 +158,15 @@ The application is completely stateless and runs natively on Vercel:
 
 > **Note on Vercel Functions**: Because session authentication uses stateless signed JWTs, any distributed Vercel serverless instance validates requests independently without needing an external session cache or database.
 
+#### Password Rotation & Invalidation on Vercel
+Session tokens are cryptographically signed using a key derived from both `AUTH_SECRET` and `APP_PASSWORD`. On Vercel, serverless instances load environment variables when a deployment starts:
+1. Update `APP_PASSWORD` in **Project Settings > Environment Variables**.
+2. Trigger a **Redeployment** of your production deployment.
+3. Because the signing key changes, all existing sessions immediately become invalid on the new deployment without requiring database or cache invalidation.
+
+#### Vercel Deployment Protection
+We recommend enabling [Vercel Deployment Protection](https://vercel.com/docs/security/deployment-protection) for preview and historical deployments. This prevents older deployment URLs (which may retain previous environment secrets) from remaining publicly accessible after a password rotation.
+
 ---
 
 ### Deploy with Docker
@@ -220,6 +231,17 @@ services:
 
 - **Hugging Face Spaces**: Hugging Face Hub currently supports the gated access request workflow exclusively for **Models** and **Datasets**. While `space` is supported as a valid type in configuration and types, Spaces do not expose gated approval endpoints on the Hub API. The application detects this and gracefully marks Spaces as `Unsupported` on the Repositories page without affecting model or dataset management.
 - **No Individual Reviewer Audit Trail**: Because this dashboard uses a shared reviewer password without individual accounts, actions are executed on the Hugging Face Hub using the configured token. Hugging Face's internal state remains the single source of truth.
+
+---
+
+## Continuous Integration
+
+Every push and pull request to `master` and `main` is validated via [GitHub Actions](.github/workflows/ci.yml) running:
+- **Vitest**: Full unit and regression test suite.
+- **TypeScript**: Strict typecheck (`tsc --noEmit`).
+- **ESLint**: Next.js and React linting rules.
+- **Next.js Standalone Build**: Production asset compilation and bundling.
+- **Docker**: Multi-stage container image build.
 
 ---
 

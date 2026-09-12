@@ -551,6 +551,7 @@ export async function checkRepositoryStatus(
       repository: repo,
       status: "connected",
       pendingCount: pendingResult.totalLoaded,
+      pendingHasMore: pendingResult.hasMore || pendingResult.truncated,
       gated,
       isPrivate,
     };

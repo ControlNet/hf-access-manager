@@ -235,5 +235,50 @@ describe("lib/huggingface network operations (mocked)", () => {
       code: "HF_TIMEOUT",
     });
   });
+
+  it("marks pendingCount as truncated with pendingHasMore=true when pending requests exceed 1 page", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: "meta-llama/Llama-2-7b",
+            private: true,
+            gated: "manual",
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify(
+            Array.from({ length: 50 }, (_, i) => ({
+              user: { user: `user${i}` },
+              status: "pending",
+              timestamp: "2026-09-12T10:00:00Z",
+            }))
+          ),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json",
+              Link: '<https://huggingface.co/api/models/meta-llama/Llama-2-7b/user-access-request/pending?page=2>; rel="next"',
+            },
+          }
+        )
+      );
+
+    vi.stubGlobal("fetch", mockFetch);
+
+    const status = await checkRepositoryStatus(modelRepo);
+
+    expect(status.status).toBe("connected");
+    expect(status.pendingCount).toBe(50);
+    expect(status.pendingHasMore).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
 });
 

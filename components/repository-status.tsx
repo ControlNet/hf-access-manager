@@ -89,7 +89,7 @@ export function RepositoryStatusList({ initialStatuses = [] }: RepositoryStatusL
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {statuses.map((item) => {
-            const { repository, status, pendingCount, acceptedCount, rejectedCount, message, isPrivate, gated } = item;
+            const { repository, status, pendingCount, pendingHasMore, acceptedCount, rejectedCount, message, isPrivate, gated } = item;
             const repoUrl =
               repository.type === "dataset"
                 ? `https://huggingface.co/datasets/${repository.repoId}`
@@ -169,6 +169,7 @@ export function RepositoryStatusList({ initialStatuses = [] }: RepositoryStatusL
                     <span className="text-muted-foreground">Pending Requests:</span>
                     <span className="font-bold text-foreground font-mono text-sm">
                       {pendingCount ?? 0}
+                      {pendingHasMore ? "+" : ""}
                     </span>
                   </div>
                 )}

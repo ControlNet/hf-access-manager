@@ -8,6 +8,13 @@ import {
   Loader2,
 } from "lucide-react";
 import { AccessRequest, ManagedRepository, RequestStatus } from "@/lib/types";
+import {
+  TabCountState,
+  applyBulkActionRepoPendingCounts,
+  applySingleActionRepoPendingCount,
+  applySingleActionTabCounts,
+  applyBulkActionTabCounts,
+} from "@/lib/counts";
 import { AccessRequestRow } from "./access-request-row";
 import { AccessRequestDetails } from "./access-request-details";
 import { BulkActionsBar } from "./bulk-actions-bar";
@@ -23,16 +30,17 @@ import Link from "next/link";
 interface AccessRequestListProps {
   configuredRepositories: ManagedRepository[];
   initialStatus?: RequestStatus;
-}
-
-interface TabCountState {
-  count: number;
-  isTruncated: boolean;
+  refreshTrigger?: number;
+  onRefreshChange?: (isRefreshing: boolean) => void;
+  onRefreshed?: (timestamp: Date) => void;
 }
 
 export function AccessRequestList({
   configuredRepositories,
   initialStatus = "pending",
+  refreshTrigger,
+  onRefreshChange,
+  onRefreshed,
 }: AccessRequestListProps) {
   const [currentTab, setCurrentTab] = React.useState<RequestStatus>(initialStatus);
   const [requests, setRequests] = React.useState<AccessRequest[]>([]);
@@ -71,6 +79,12 @@ export function AccessRequestList({
   // Pending counts by repository key for the dropdown badges
   const [repoPendingCounts, setRepoPendingCounts] = React.useState<Record<string, number>>({});
 
+  // Callbacks refs for external refresh notifications
+  const onRefreshChangeRef = React.useRef(onRefreshChange);
+  onRefreshChangeRef.current = onRefreshChange;
+  const onRefreshedRef = React.useRef(onRefreshed);
+  onRefreshedRef.current = onRefreshed;
+
   // AbortController ref to cancel in-flight fetches on rapid tab switching or unmount
   const activeAbortControllerRef = React.useRef<AbortController | null>(null);
 
@@ -85,6 +99,7 @@ export function AccessRequestList({
       activeAbortControllerRef.current = controller;
 
       try {
+        onRefreshChangeRef.current?.(true);
         if (isAppending) {
           setIsLoadingMore(true);
         } else {
@@ -152,6 +167,8 @@ export function AccessRequestList({
         if (!controller.signal.aborted) {
           setIsLoading(false);
           setIsLoadingMore(false);
+          onRefreshChangeRef.current?.(false);
+          onRefreshedRef.current?.(new Date());
         }
       }
     },
@@ -173,6 +190,15 @@ export function AccessRequestList({
     setCurrentMaxPages(defaultPages);
     fetchTabRequests(currentTab, defaultPages);
   }, [currentTab, fetchTabRequests]);
+
+  // Handle external refresh trigger from Navbar without unmounting or resetting UI state
+  const prevRefreshTriggerRef = React.useRef(refreshTrigger);
+  React.useEffect(() => {
+    if (refreshTrigger !== undefined && refreshTrigger !== prevRefreshTriggerRef.current) {
+      prevRefreshTriggerRef.current = refreshTrigger;
+      fetchTabRequests(currentTab, currentMaxPages);
+    }
+  }, [refreshTrigger, currentTab, currentMaxPages, fetchTabRequests]);
 
   // Handle Tab Switch
   const handleTabChange = (val: string) => {
@@ -283,39 +309,14 @@ export function AccessRequestList({
       });
 
       // Update per-repo pending count if on pending tab
-      if (currentTab === "pending") {
-        const key = `${request.repository.type}:${request.repository.repoId}`;
-        setRepoPendingCounts((prev) => ({
-          ...prev,
-          [key]: Math.max(0, (prev[key] || 1) - 1),
-        }));
-      }
+      setRepoPendingCounts((prev) =>
+        applySingleActionRepoPendingCount(prev, request, "approve", currentTab)
+      );
 
       // Conservative tab count updates:
-      // If approving from Pending: Pending - 1, Accepted + 1 (only if known)
-      // If approving from Rejected: Rejected - 1, Accepted + 1 (only if known)
-      setTabCounts((prev) => {
-        const next = { ...prev };
-        if (currentTab === "pending" && prev.pending !== undefined) {
-          next.pending = {
-            ...prev.pending,
-            count: Math.max(0, prev.pending.count - 1),
-          };
-        } else if (currentTab === "rejected" && prev.rejected !== undefined) {
-          next.rejected = {
-            ...prev.rejected,
-            count: Math.max(0, prev.rejected.count - 1),
-          };
-        }
-
-        if (prev.accepted !== undefined) {
-          next.accepted = {
-            ...prev.accepted,
-            count: prev.accepted.count + 1,
-          };
-        }
-        return next;
-      });
+      setTabCounts((prev) =>
+        applySingleActionTabCounts(prev, currentTab, "approve")
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Approval failed");
     } finally {
@@ -350,33 +351,15 @@ export function AccessRequestList({
         return next;
       });
 
-      // Update per-repo pending count
-      if (currentTab === "pending") {
-        const key = `${request.repository.type}:${request.repository.repoId}`;
-        setRepoPendingCounts((prev) => ({
-          ...prev,
-          [key]: Math.max(0, (prev[key] || 1) - 1),
-        }));
-      }
+      // Update per-repo pending count if on pending tab
+      setRepoPendingCounts((prev) =>
+        applySingleActionRepoPendingCount(prev, request, "reject", currentTab)
+      );
 
       // Conservative tab count update:
-      // Pending - 1, Rejected + 1 (if known)
-      setTabCounts((prev) => {
-        const next = { ...prev };
-        if (currentTab === "pending" && prev.pending !== undefined) {
-          next.pending = {
-            ...prev.pending,
-            count: Math.max(0, prev.pending.count - 1),
-          };
-        }
-        if (prev.rejected !== undefined) {
-          next.rejected = {
-            ...prev.rejected,
-            count: prev.rejected.count + 1,
-          };
-        }
-        return next;
-      });
+      setTabCounts((prev) =>
+        applySingleActionTabCounts(prev, currentTab, "reject")
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Rejection failed");
     } finally {
@@ -406,24 +389,15 @@ export function AccessRequestList({
       // Update local state
       setRequests((prev) => prev.filter((r) => r.id !== request.id));
 
-      // Conservative tab count update:
-      // Revoking resets user to pending: Accepted - 1, Pending + 1 (if known)
-      setTabCounts((prev) => {
-        const next = { ...prev };
-        if (prev.accepted !== undefined) {
-          next.accepted = {
-            ...prev.accepted,
-            count: Math.max(0, prev.accepted.count - 1),
-          };
-        }
-        if (prev.pending !== undefined) {
-          next.pending = {
-            ...prev.pending,
-            count: prev.pending.count + 1,
-          };
-        }
-        return next;
-      });
+      // Update per-repo pending count if known (Accepted -> Revoke -> Pending)
+      setRepoPendingCounts((prev) =>
+        applySingleActionRepoPendingCount(prev, request, "revoke", currentTab)
+      );
+
+      // Conservative tab count update (Accepted - 1, Pending + 1 if known):
+      setTabCounts((prev) =>
+        applySingleActionTabCounts(prev, currentTab, "revoke")
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Revoke failed");
     } finally {
@@ -467,7 +441,7 @@ export function AccessRequestList({
       }
 
       // Use exact composite key (id) for partial failure identification
-      const failedIds = new Set(result.errors.map((e: { id: string }) => e.id));
+      const failedIds = new Set<string>(result.errors.map((e: { id: string }) => e.id));
 
       setRequests((prev) =>
         prev.filter((r) => !selectedIds.has(r.id) || failedIds.has(r.id))
@@ -484,23 +458,17 @@ export function AccessRequestList({
         return next;
       });
 
+      // Update per-repo pending counts for successful items
+      if (currentTab === "pending") {
+        setRepoPendingCounts((prev) =>
+          applyBulkActionRepoPendingCounts(prev, selectedRequests, failedIds)
+        );
+      }
+
       // Update tab counts conservatively
-      setTabCounts((prev) => {
-        const next = { ...prev };
-        if (prev.pending !== undefined) {
-          next.pending = {
-            ...prev.pending,
-            count: Math.max(0, prev.pending.count - result.succeeded),
-          };
-        }
-        if (prev.accepted !== undefined) {
-          next.accepted = {
-            ...prev.accepted,
-            count: prev.accepted.count + result.succeeded,
-          };
-        }
-        return next;
-      });
+      setTabCounts((prev) =>
+        applyBulkActionTabCounts(prev, "approve", result.succeeded)
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Bulk approval encountered an error");
     } finally {
@@ -544,7 +512,7 @@ export function AccessRequestList({
       }
 
       // Use exact composite key (id) for partial failure identification
-      const failedIds = new Set(result.errors.map((e: { id: string }) => e.id));
+      const failedIds = new Set<string>(result.errors.map((e: { id: string }) => e.id));
 
       setRequests((prev) =>
         prev.filter((r) => !selectedIds.has(r.id) || failedIds.has(r.id))
@@ -560,23 +528,17 @@ export function AccessRequestList({
         return next;
       });
 
+      // Update per-repo pending counts for successful items
+      if (currentTab === "pending") {
+        setRepoPendingCounts((prev) =>
+          applyBulkActionRepoPendingCounts(prev, selectedRequests, failedIds)
+        );
+      }
+
       // Update tab counts conservatively
-      setTabCounts((prev) => {
-        const next = { ...prev };
-        if (prev.pending !== undefined) {
-          next.pending = {
-            ...prev.pending,
-            count: Math.max(0, prev.pending.count - result.succeeded),
-          };
-        }
-        if (prev.rejected !== undefined) {
-          next.rejected = {
-            ...prev.rejected,
-            count: prev.rejected.count + result.succeeded,
-          };
-        }
-        return next;
-      });
+      setTabCounts((prev) =>
+        applyBulkActionTabCounts(prev, "reject", result.succeeded)
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Bulk rejection encountered an error");
     } finally {
@@ -659,18 +621,9 @@ export function AccessRequestList({
               // Refresh active tab
               fetchTabRequests(currentTab, currentMaxPages);
               // Optimistically update accepted count if known
-              setTabCounts((prev) => {
-                if (prev.accepted !== undefined) {
-                  return {
-                    ...prev,
-                    accepted: {
-                      ...prev.accepted,
-                      count: prev.accepted.count + 1,
-                    },
-                  };
-                }
-                return prev;
-              });
+              setTabCounts((prev) =>
+                applySingleActionTabCounts(prev, currentTab, "grant")
+              );
             }}
           />
         </div>

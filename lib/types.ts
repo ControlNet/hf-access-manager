@@ -23,6 +23,7 @@ export interface RepositoryStatus {
   repository: ManagedRepository;
   status: "connected" | "unsupported" | "error";
   pendingCount?: number;
+  pendingHasMore?: boolean;
   acceptedCount?: number;
   rejectedCount?: number;
   message?: string;

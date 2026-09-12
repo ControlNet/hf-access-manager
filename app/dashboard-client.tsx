@@ -10,17 +10,12 @@ interface DashboardClientProps {
 }
 
 export function DashboardClient({ configuredRepositories }: DashboardClientProps) {
-  const [refreshKey, setRefreshKey] = React.useState(0);
+  const [refreshTrigger, setRefreshTrigger] = React.useState(0);
   const [isRefreshing, setIsRefreshing] = React.useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = React.useState<Date | null>(new Date());
 
   const handleRefresh = React.useCallback(() => {
-    setIsRefreshing(true);
-    setRefreshKey((k) => k + 1);
-    setLastRefreshedAt(new Date());
-    setTimeout(() => {
-      setIsRefreshing(false);
-    }, 600);
+    setRefreshTrigger((prev) => prev + 1);
   }, []);
 
   return (
@@ -33,8 +28,10 @@ export function DashboardClient({ configuredRepositories }: DashboardClientProps
 
       <main className="flex-1 container max-w-7xl px-4 sm:px-8 py-6">
         <AccessRequestList
-          key={refreshKey}
           configuredRepositories={configuredRepositories}
+          refreshTrigger={refreshTrigger}
+          onRefreshChange={setIsRefreshing}
+          onRefreshed={setLastRefreshedAt}
         />
       </main>
 

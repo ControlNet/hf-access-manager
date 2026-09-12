@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getEnv } from "@/lib/env";
 import { aggregateRequests } from "@/lib/access";
 import { RequestStatus } from "@/lib/types";
+import { clampMaxPages } from "@/lib/pagination";
 
 export const dynamic = "force-dynamic";
 
@@ -15,9 +16,7 @@ export async function GET(request: NextRequest) {
       ? (statusParam as RequestStatus)
       : "pending";
 
-    const maxPagesParam = searchParams.get("maxPages");
-    const parsedMax = maxPagesParam ? parseInt(maxPagesParam, 10) : undefined;
-    const maxPages = parsedMax && !isNaN(parsedMax) && parsedMax > 0 ? parsedMax : undefined;
+    const maxPages = clampMaxPages(searchParams.get("maxPages"));
 
     const { hfRepositories } = getEnv();
     const result = await aggregateRequests(hfRepositories, status, { maxPages });

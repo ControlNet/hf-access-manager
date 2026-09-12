@@ -14,6 +14,7 @@ interface RepositoryFilterProps {
   onTypeChange: (type: string) => void;
   configuredRepositories: ManagedRepository[];
   repoPendingCounts?: Record<string, number>;
+  repoPendingTruncated?: Record<string, boolean>;
 }
 
 export function RepositoryFilter({
@@ -25,6 +26,7 @@ export function RepositoryFilter({
   onTypeChange,
   configuredRepositories,
   repoPendingCounts = {},
+  repoPendingTruncated = {},
 }: RepositoryFilterProps) {
   // Extract distinct configured repo types
   const configuredTypes = React.useMemo(() => {
@@ -119,7 +121,9 @@ export function RepositoryFilter({
             {availableRepoOptions.map((repo) => {
               const key = `${repo.type}:${repo.repoId}`;
               const count = repoPendingCounts[key];
-              const countBadge = typeof count === "number" ? ` (${count})` : "";
+              const isTruncated = Boolean(repoPendingTruncated[key]);
+              const countBadge =
+                typeof count === "number" ? ` (${count}${isTruncated ? "+" : ""})` : "";
               return (
                 <option key={key} value={key}>
                   [{repo.type.toUpperCase()}] {repo.repoId}

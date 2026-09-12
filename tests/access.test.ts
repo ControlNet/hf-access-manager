@@ -172,6 +172,10 @@ describe("lib/access", () => {
       // Newest requestedAt first: user2 (11:00) then user1 (10:00)
       expect(result.requests[0].username).toBe("user2");
       expect(result.requests[1].username).toBe("user1");
+      expect(result.repositoryPagination).toEqual({
+        "model:org/model-a": { hasMore: false, truncated: false },
+        "dataset:org/dataset-b": { hasMore: true, truncated: true },
+      });
     });
 
     it("isolates repository errors using Promise.allSettled", async () => {

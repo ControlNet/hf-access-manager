@@ -15,6 +15,13 @@ import {
   applySingleActionTabCounts,
   applyBulkActionTabCounts,
 } from "@/lib/counts";
+import {
+  ABSOLUTE_MAX_PAGES,
+  PAGE_INCREMENT,
+  getNextPageLimit,
+  isPaginationAtHardCap,
+} from "@/lib/pagination";
+import { shouldUpdateRefreshTimestamp } from "@/lib/refresh";
 import { AccessRequestRow } from "./access-request-row";
 import { AccessRequestDetails } from "./access-request-details";
 import { BulkActionsBar } from "./bulk-actions-bar";
@@ -78,6 +85,7 @@ export function AccessRequestList({
 
   // Pending counts by repository key for the dropdown badges
   const [repoPendingCounts, setRepoPendingCounts] = React.useState<Record<string, number>>({});
+  const [repoPendingTruncated, setRepoPendingTruncated] = React.useState<Record<string, boolean>>({});
 
   // Callbacks refs for external refresh notifications
   const onRefreshChangeRef = React.useRef(onRefreshChange);
@@ -150,11 +158,28 @@ export function AccessRequestList({
             counts[key] = (counts[key] || 0) + 1;
           }
           setRepoPendingCounts(counts);
+
+          if (data.repositoryPagination) {
+            const truncatedMap: Record<string, boolean> = {};
+            for (const [key, meta] of Object.entries(
+              data.repositoryPagination as Record<string, { hasMore?: boolean; truncated?: boolean }>
+            )) {
+              if (meta?.hasMore || meta?.truncated) {
+                truncatedMap[key] = true;
+              }
+            }
+            setRepoPendingTruncated(truncatedMap);
+          }
         }
 
         // Clear bulk selection on tab switch or reload
         if (!isAppending) {
           setSelectedIds(new Set());
+        }
+
+        // Update refresh timestamp ONLY on verified successful fetch & state update
+        if (shouldUpdateRefreshTimestamp({ success: true, aborted: controller.signal.aborted })) {
+          onRefreshedRef.current?.(new Date());
         }
       } catch (err: unknown) {
         if ((err as { name?: string }).name === "AbortError" || controller.signal.aborted) {
@@ -168,7 +193,6 @@ export function AccessRequestList({
           setIsLoading(false);
           setIsLoadingMore(false);
           onRefreshChangeRef.current?.(false);
-          onRefreshedRef.current?.(new Date());
         }
       }
     },
@@ -180,7 +204,9 @@ export function AccessRequestList({
     return () => {
       if (activeAbortControllerRef.current) {
         activeAbortControllerRef.current.abort();
+        activeAbortControllerRef.current = null;
       }
+      onRefreshChangeRef.current?.(false);
     };
   }, []);
 
@@ -208,9 +234,15 @@ export function AccessRequestList({
     setSelectedIds(new Set());
   };
 
-  // Handle Load More (incremental pagination for large histories)
+  // Handle Load More (incremental pagination bounded by ABSOLUTE_MAX_PAGES)
   const handleLoadMore = () => {
-    const nextPages = currentMaxPages + 10;
+    if (isPaginationAtHardCap(currentMaxPages, ABSOLUTE_MAX_PAGES)) {
+      return;
+    }
+    const nextPages = getNextPageLimit(currentMaxPages, PAGE_INCREMENT, ABSOLUTE_MAX_PAGES);
+    if (nextPages === currentMaxPages) {
+      return;
+    }
     setCurrentMaxPages(nextPages);
     fetchTabRequests(currentTab, nextPages, true);
   };
@@ -639,6 +671,7 @@ export function AccessRequestList({
         onTypeChange={setSelectedType}
         configuredRepositories={configuredRepositories}
         repoPendingCounts={repoPendingCounts}
+        repoPendingTruncated={repoPendingTruncated}
       />
 
       {/* Requests Table / List Container */}
@@ -709,25 +742,36 @@ export function AccessRequestList({
         {/* Truncation / Load More Indicator */}
         {hasMore && (
           <div className="flex flex-col sm:flex-row items-center justify-between border-t bg-muted/20 px-4 py-3 text-xs text-muted-foreground gap-2">
-            <span>
-              Showing first {requests.length} requests (more {currentTab} requests are available on Hugging Face Hub).
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleLoadMore}
-              disabled={isLoadingMore}
-              className="h-7 text-xs"
-            >
-              {isLoadingMore ? (
-                <>
-                  <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
-                  Loading...
-                </>
-              ) : (
-                "Load more requests"
-              )}
-            </Button>
+            {isPaginationAtHardCap(currentMaxPages, ABSOLUTE_MAX_PAGES) ? (
+              <div className="flex w-full items-center justify-between gap-2">
+                <span>Showing first {requests.length}+ requests.</span>
+                <span className="font-medium text-muted-foreground/90">
+                  Display limit reached · More requests exist on Hugging Face Hub
+                </span>
+              </div>
+            ) : (
+              <>
+                <span>
+                  Showing first {requests.length}+ requests (more {currentTab} requests are available on Hugging Face Hub).
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleLoadMore}
+                  disabled={isLoadingMore}
+                  className="h-7 text-xs"
+                >
+                  {isLoadingMore ? (
+                    <>
+                      <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                      Loading...
+                    </>
+                  ) : (
+                    "Load more requests"
+                  )}
+                </Button>
+              </>
+            )}
           </div>
         )}
       </div>

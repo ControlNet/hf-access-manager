@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { clampMaxPages, ABSOLUTE_MAX_PAGES } from "@/lib/pagination";
+import {
+  clampMaxPages,
+  ABSOLUTE_MAX_PAGES,
+  PAGE_INCREMENT,
+  getNextPageLimit,
+  isPaginationAtHardCap,
+  canLoadMore,
+} from "@/lib/pagination";
 
 describe("clampMaxPages (server-side pagination upper bound)", () => {
   it("exports ABSOLUTE_MAX_PAGES as 100", () => {
@@ -35,5 +42,44 @@ describe("clampMaxPages (server-side pagination upper bound)", () => {
     expect(clampMaxPages("10")).toBe(10);
     expect(clampMaxPages("50")).toBe(50);
     expect(clampMaxPages("99")).toBe(99);
+  });
+});
+
+describe("pagination hard-cap helpers", () => {
+  it("exports PAGE_INCREMENT as 10", () => {
+    expect(PAGE_INCREMENT).toBe(10);
+  });
+
+  it("increments below hard cap correctly: current=90, increment=10 -> next=100", () => {
+    expect(getNextPageLimit(90, 10, 100)).toBe(100);
+    expect(getNextPageLimit(10, 10, 100)).toBe(20);
+    expect(getNextPageLimit(50, 10, 100)).toBe(60);
+  });
+
+  it("clamps at hard cap: current=100, increment=10, max=100 -> next=100", () => {
+    expect(getNextPageLimit(100, 10, 100)).toBe(100);
+    expect(getNextPageLimit(110, 10, 100)).toBe(100);
+  });
+
+  it("detects when hard cap has been reached (isPaginationAtHardCap)", () => {
+    expect(isPaginationAtHardCap(10, 100)).toBe(false);
+    expect(isPaginationAtHardCap(90, 100)).toBe(false);
+    expect(isPaginationAtHardCap(99, 100)).toBe(false);
+    expect(isPaginationAtHardCap(100, 100)).toBe(true);
+    expect(isPaginationAtHardCap(110, 100)).toBe(true);
+  });
+
+  it("determines whether more pages can be loaded (canLoadMore)", () => {
+    // Normal cases
+    expect(canLoadMore(true, 10, 100)).toBe(true);
+    expect(canLoadMore(true, 90, 100)).toBe(true);
+
+    // Hard-cap reached: hasMore is true, but currentMaxPages=100 -> action blocked
+    expect(canLoadMore(true, 100, 100)).toBe(false);
+    expect(canLoadMore(true, 110, 100)).toBe(false);
+
+    // No more data on HF: hasMore is false
+    expect(canLoadMore(false, 10, 100)).toBe(false);
+    expect(canLoadMore(false, 100, 100)).toBe(false);
   });
 });

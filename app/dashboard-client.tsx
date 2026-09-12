@@ -12,7 +12,7 @@ interface DashboardClientProps {
 export function DashboardClient({ configuredRepositories }: DashboardClientProps) {
   const [refreshTrigger, setRefreshTrigger] = React.useState(0);
   const [isRefreshing, setIsRefreshing] = React.useState(false);
-  const [lastRefreshedAt, setLastRefreshedAt] = React.useState<Date | null>(new Date());
+  const [lastRefreshedAt, setLastRefreshedAt] = React.useState<Date | null>(null);
 
   const handleRefresh = React.useCallback(() => {
     setRefreshTrigger((prev) => prev + 1);

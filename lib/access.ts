@@ -28,6 +28,7 @@ export interface AggregateRequestsResult {
   successfulRepos: number;
   hasMore: boolean;
   truncated: boolean;
+  repositoryPagination?: Record<string, { hasMore: boolean; truncated: boolean }>;
 }
 
 /**
@@ -108,6 +109,7 @@ export async function aggregateRequests(
   );
 
   let successfulRepos = 0;
+  const repositoryPagination: Record<string, { hasMore: boolean; truncated: boolean }> = {};
 
   for (let i = 0; i < results.length; i++) {
     const result = results[i];
@@ -118,6 +120,11 @@ export async function aggregateRequests(
       allRequests.push(...result.value.requests);
       if (result.value.hasMore) overallHasMore = true;
       if (result.value.truncated) overallTruncated = true;
+      const key = `${result.value.repo.type}:${result.value.repo.repoId}`;
+      repositoryPagination[key] = {
+        hasMore: Boolean(result.value.hasMore),
+        truncated: Boolean(result.value.truncated),
+      };
     } else {
       const reason = result.reason;
       const errorMsg = reason instanceof Error ? reason.message : String(reason);
@@ -145,6 +152,7 @@ export async function aggregateRequests(
     successfulRepos,
     hasMore: overallHasMore,
     truncated: overallTruncated,
+    repositoryPagination,
   };
 }
 

@@ -4,6 +4,7 @@ import {
   applySingleActionRepoPendingCount,
   applySingleActionTabCounts,
   applyBulkActionTabCounts,
+  formatRepositoryBadge,
   TabCounts,
 } from "@/lib/counts";
 import { AccessRequest } from "@/lib/types";
@@ -200,6 +201,30 @@ describe("lib/counts", () => {
       expect(res.pending?.count).toBe(7);
       expect(res.rejected?.count).toBe(5);
       expect(res.accepted).toBeUndefined();
+    });
+  });
+
+  describe("formatRepositoryBadge (Pending-only filter badges)", () => {
+    it("renders count badge on Pending tab (showCounts=true)", () => {
+      expect(formatRepositoryBadge(17, false, true)).toBe(" (17)");
+    });
+
+    it("renders count badge with '+' notation when truncated on Pending tab", () => {
+      expect(formatRepositoryBadge(2000, true, true)).toBe(" (2000+)");
+    });
+
+    it("omits badge on Accepted tab (showCounts=false)", () => {
+      expect(formatRepositoryBadge(17, false, false)).toBe("");
+      expect(formatRepositoryBadge(2000, true, false)).toBe("");
+    });
+
+    it("omits badge on Rejected tab (showCounts=false)", () => {
+      expect(formatRepositoryBadge(5, false, false)).toBe("");
+    });
+
+    it("omits badge when count is undefined", () => {
+      expect(formatRepositoryBadge(undefined, false, true)).toBe("");
+      expect(formatRepositoryBadge(undefined, true, true)).toBe("");
     });
   });
 });

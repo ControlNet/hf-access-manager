@@ -6,6 +6,7 @@ import {
   getNextPageLimit,
   isPaginationAtHardCap,
   canLoadMore,
+  shouldDisplayPaginationFooter,
 } from "@/lib/pagination";
 
 describe("clampMaxPages (server-side pagination upper bound)", () => {
@@ -81,5 +82,20 @@ describe("pagination hard-cap helpers", () => {
     // No more data on HF: hasMore is false
     expect(canLoadMore(false, 10, 100)).toBe(false);
     expect(canLoadMore(false, 100, 100)).toBe(false);
+  });
+
+  describe("shouldDisplayPaginationFooter (prevents stale pagination UI while loading)", () => {
+    it("hides footer while initial or tab-switch loading (isLoading=true), even if hasMore was true", () => {
+      expect(shouldDisplayPaginationFooter(true, true)).toBe(false);
+      expect(shouldDisplayPaginationFooter(true, false)).toBe(false);
+    });
+
+    it("displays footer when loaded (isLoading=false) and hasMore is true", () => {
+      expect(shouldDisplayPaginationFooter(false, true)).toBe(true);
+    });
+
+    it("hides footer when loaded (isLoading=false) and hasMore is false", () => {
+      expect(shouldDisplayPaginationFooter(false, false)).toBe(false);
+    });
   });
 });

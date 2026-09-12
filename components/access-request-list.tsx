@@ -20,6 +20,7 @@ import {
   PAGE_INCREMENT,
   getNextPageLimit,
   isPaginationAtHardCap,
+  shouldDisplayPaginationFooter,
 } from "@/lib/pagination";
 import { shouldUpdateRefreshTimestamp } from "@/lib/refresh";
 import { AccessRequestRow } from "./access-request-row";
@@ -112,6 +113,7 @@ export function AccessRequestList({
           setIsLoadingMore(true);
         } else {
           setIsLoading(true);
+          setHasMore(false);
         }
 
         const queryParams = new URLSearchParams({ status: statusToFetch });
@@ -232,6 +234,7 @@ export function AccessRequestList({
     if (newStatus === currentTab) return;
     setCurrentTab(newStatus);
     setSelectedIds(new Set());
+    setHasMore(false);
   };
 
   // Handle Load More (incremental pagination bounded by ABSOLUTE_MAX_PAGES)
@@ -670,8 +673,9 @@ export function AccessRequestList({
         selectedType={selectedType}
         onTypeChange={setSelectedType}
         configuredRepositories={configuredRepositories}
-        repoPendingCounts={repoPendingCounts}
-        repoPendingTruncated={repoPendingTruncated}
+        repoPendingCounts={currentTab === "pending" ? repoPendingCounts : {}}
+        repoPendingTruncated={currentTab === "pending" ? repoPendingTruncated : {}}
+        showPendingCounts={currentTab === "pending"}
       />
 
       {/* Requests Table / List Container */}
@@ -740,7 +744,7 @@ export function AccessRequestList({
         )}
 
         {/* Truncation / Load More Indicator */}
-        {hasMore && (
+        {shouldDisplayPaginationFooter(isLoading, hasMore) && (
           <div className="flex flex-col sm:flex-row items-center justify-between border-t bg-muted/20 px-4 py-3 text-xs text-muted-foreground gap-2">
             {isPaginationAtHardCap(currentMaxPages, ABSOLUTE_MAX_PAGES) ? (
               <div className="flex w-full items-center justify-between gap-2">

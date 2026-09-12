@@ -187,3 +187,18 @@ export function applyBulkActionTabCounts(
 
   return next;
 }
+
+/**
+ * Formats the count badge displayed in the repository filter options.
+ * Only displays pending request counts while viewing the pending tab (showCounts=true).
+ */
+export function formatRepositoryBadge(
+  count: number | undefined,
+  isTruncated: boolean | undefined,
+  showCounts: boolean
+): string {
+  if (!showCounts || typeof count !== "number") {
+    return "";
+  }
+  return ` (${count}${isTruncated ? "+" : ""})`;
+}

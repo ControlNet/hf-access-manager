@@ -4,6 +4,7 @@ import * as React from "react";
 import { Search, X, Filter } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { ManagedRepository, RepoType } from "@/lib/types";
+import { formatRepositoryBadge } from "@/lib/counts";
 
 interface RepositoryFilterProps {
   searchQuery: string;
@@ -15,6 +16,7 @@ interface RepositoryFilterProps {
   configuredRepositories: ManagedRepository[];
   repoPendingCounts?: Record<string, number>;
   repoPendingTruncated?: Record<string, boolean>;
+  showPendingCounts?: boolean;
 }
 
 export function RepositoryFilter({
@@ -27,6 +29,7 @@ export function RepositoryFilter({
   configuredRepositories,
   repoPendingCounts = {},
   repoPendingTruncated = {},
+  showPendingCounts = true,
 }: RepositoryFilterProps) {
   // Extract distinct configured repo types
   const configuredTypes = React.useMemo(() => {
@@ -120,10 +123,11 @@ export function RepositoryFilter({
             <option value="all">All repositories</option>
             {availableRepoOptions.map((repo) => {
               const key = `${repo.type}:${repo.repoId}`;
-              const count = repoPendingCounts[key];
-              const isTruncated = Boolean(repoPendingTruncated[key]);
-              const countBadge =
-                typeof count === "number" ? ` (${count}${isTruncated ? "+" : ""})` : "";
+              const countBadge = formatRepositoryBadge(
+                repoPendingCounts[key],
+                repoPendingTruncated[key],
+                showPendingCounts
+              );
               return (
                 <option key={key} value={key}>
                   [{repo.type.toUpperCase()}] {repo.repoId}

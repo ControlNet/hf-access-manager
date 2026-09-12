@@ -54,3 +54,11 @@ export function canLoadMore(
 ): boolean {
   return hasMore && !isPaginationAtHardCap(currentMaxPages, absoluteMax);
 }
+
+/**
+ * Determines whether the truncation / Load More footer should be visible in the UI.
+ * Stale pagination from a previous tab must never be rendered while the active tab is loading.
+ */
+export function shouldDisplayPaginationFooter(isLoading: boolean, hasMore: boolean): boolean {
+  return !isLoading && hasMore;
+}

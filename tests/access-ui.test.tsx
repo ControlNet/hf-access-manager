@@ -115,7 +115,7 @@ describe("real dashboard integration", () => {
     expect(screen.queryByRole("button", { name: /more answers/ })).toBeNull();
   });
 
-  it("expands a form long enough to swallow the row, in place", async () => {
+  it("puts a twenty-answer form on the row without an expander", async () => {
     const huge = {
       ...row(),
       fields: Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`question_${i}`, `answer ${i}`])),
@@ -127,14 +127,8 @@ describe("real dashboard integration", () => {
     render(<AccessRequestList configuredRepositories={[repo]} />);
 
     await screen.findByText("answer 0");
-    expect(screen.queryByText("answer 19")).toBeNull();
-
-    const expander = screen.getByRole("button", { name: /\+8 more answers/ });
-    expect(expander.getAttribute("aria-expanded")).toBe("false");
-    fireEvent.click(expander);
-
     expect(screen.getByText("answer 19")).toBeTruthy();
-    expect(screen.getByText("answer 0")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /more answers|Show full answer/ })).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 

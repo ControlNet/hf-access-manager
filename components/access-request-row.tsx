@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Check, ChevronDown, ChevronUp, ExternalLink, Loader2, RotateCcw, TriangleAlert, X } from "lucide-react";
+import { Check, ExternalLink, Loader2, RotateCcw, TriangleAlert, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -19,9 +19,6 @@ interface AccessRequestRowProps {
   onRevoke: (request: AccessRequest) => Promise<boolean>;
   isMutating?: boolean;
 }
-
-/** Long enough that the two-line clamp is probably hiding something. */
-const CLAMPED_NARRATIVE_LENGTH = 160;
 
 const COLUMNS =
   "grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-3 lg:grid-cols-[26px_minmax(0,1fr)_226px_92px_172px] lg:gap-4";
@@ -50,14 +47,8 @@ export function AccessRequestRow({
   onRevoke,
   isMutating = false,
 }: AccessRequestRowProps) {
-  const [expanded, setExpanded] = React.useState(false);
-
   const summary = React.useMemo(() => summarizeRequestFields(request.fields), [request.fields]);
   const thin = isThinRequest(summary);
-
-  const narrativeMayBeClipped =
-    summary.narrative?.value != null && summary.narrative.value.length > CLAMPED_NARRATIVE_LENGTH;
-  const canExpand = summary.extra.length > 0 || narrativeMayBeClipped;
 
   const repoUrl =
     request.repository.type === "dataset"
@@ -109,11 +100,25 @@ export function AccessRequestRow({
                 {request.fullName}
               </span>
             ) : (
-              <span className="font-mono text-sm font-medium text-foreground">@{request.username}</span>
+              <a
+                href={profileUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="font-mono text-sm font-medium text-foreground hover:text-primary hover:underline"
+              >
+                @{request.username}
+              </a>
             )}
 
             {request.fullName && (
-              <span className="font-mono text-xs text-muted-foreground">@{request.username}</span>
+              <a
+                href={profileUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="font-mono text-xs text-muted-foreground hover:text-primary hover:underline"
+              >
+                @{request.username}
+              </a>
             )}
 
             {request.email && (
@@ -140,79 +145,24 @@ export function AccessRequestRow({
               </Badge>
             )}
 
-            {canExpand && (
-              <button
-                type="button"
-                onClick={() => setExpanded((prev) => !prev)}
-                aria-expanded={expanded}
-                className="inline-flex h-[17px] items-center gap-1 self-center rounded-sm border border-input px-1.5 text-[10.5px] text-primary transition-colors hover:bg-primary/10"
-              >
-                {expanded
-                  ? "Hide extra answers"
-                  : summary.extra.length > 0
-                    ? `+${summary.extra.length} more answers`
-                    : "Show full answer"}
-                {expanded ? (
-                  <ChevronUp className="h-2.5 w-2.5" strokeWidth={2} />
-                ) : (
-                  <ChevronDown className="h-2.5 w-2.5" strokeWidth={2} />
-                )}
-              </button>
-            )}
           </div>
 
-          {/* Every answer the form asked, deciding ones first. */}
-          {!expanded && summary.inline.length > 0 && (
+          {/* Every answer the form asked, deciding ones first, none withheld. */}
+          {summary.fields.length > 0 && (
             <div className="grid grid-cols-2 gap-x-5 gap-y-2 sm:grid-cols-4">
-              {summary.inline.map((field) => (
+              {summary.fields.map((field) => (
                 <FieldCell key={field.key} field={field} />
               ))}
             </div>
           )}
 
-          {/* Expanded: every answer the form carries, in place. */}
-          {expanded && summary.total > 0 && (
-            <div className="grid grid-cols-1 gap-px overflow-hidden rounded-md border border-border bg-border sm:grid-cols-2 lg:grid-cols-3">
-              {[...summary.inline, ...summary.extra].map((field) => (
-                <div key={field.key} className="bg-muted px-[11px] py-2">
-                  <FieldCell field={field} />
-                </div>
-              ))}
-            </div>
-          )}
-
+          {/* The long answer, in full — reading it should never cost a click. */}
           {summary.narrative?.value && (
-            <div className={cn("flex gap-2.5", expanded && "border-l-2 border-border pl-3")}>
-              {!expanded && <span className="field-label shrink-0 pt-0.5">{summary.narrative.label}</span>}
-              <div className="min-w-0">
-                {expanded && <div className="field-label mb-0.5">{summary.narrative.label}</div>}
-                <p
-                  className={cn(
-                    "text-[12.5px] leading-[1.45] text-prose [text-wrap:pretty]",
-                    !expanded && "line-clamp-2"
-                  )}
-                >
-                  {summary.narrative.value}
-                </p>
-              </div>
-            </div>
-          )}
-
-          {expanded && (
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-0.5">
-              <a
-                href={profileUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 text-[11.5px] text-primary hover:underline"
-              >
-                huggingface.co/{request.username}
-                <ExternalLink className="h-2.5 w-2.5" strokeWidth={1.6} />
-              </a>
-              <span className="font-mono text-[11px] text-label">
-                requested {formatDateTime(request.requestedAt)} · {summary.total}{" "}
-                {summary.total === 1 ? "form answer" : "form answers"}
-              </span>
+            <div className="flex gap-2.5">
+              <span className="field-label shrink-0 pt-0.5">{summary.narrative.label}</span>
+              <p className="min-w-0 text-[12.5px] leading-[1.45] text-prose [text-wrap:pretty]">
+                {summary.narrative.value}
+              </p>
             </div>
           )}
         </div>
@@ -221,7 +171,10 @@ export function AccessRequestRow({
         <div className="col-start-2 flex min-w-0 flex-col gap-1.5 lg:col-start-auto">
           <div className="flex items-center gap-2">
             <Badge variant={request.repository.type}>{request.repository.type}</Badge>
-            <span className="font-mono text-xs text-muted-foreground lg:hidden">
+            <span
+              className="font-mono text-xs text-muted-foreground lg:hidden"
+              title={formatDateTime(request.requestedAt)}
+            >
               {formatTimeAgo(request.requestedAt)}
             </span>
           </div>
@@ -230,14 +183,21 @@ export function AccessRequestRow({
             target="_blank"
             rel="noreferrer"
             title={request.repository.repoId}
-            className="truncate font-mono text-xs text-value hover:text-primary hover:underline"
+            className="group inline-flex min-w-0 items-center gap-1.5 font-mono text-xs text-value hover:text-primary"
           >
-            {request.repository.repoId}
+            <span className="truncate">{request.repository.repoId}</span>
+            <ExternalLink
+              className="h-2.5 w-2.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+              strokeWidth={1.6}
+            />
           </a>
         </div>
 
         {/* Age — its own column once there is room for it. */}
-        <div className="hidden pt-0.5 text-xs text-muted-foreground lg:block">
+        <div
+          className="hidden pt-0.5 text-xs text-muted-foreground lg:block"
+          title={formatDateTime(request.requestedAt)}
+        >
           {formatTimeAgo(request.requestedAt)}
         </div>
 

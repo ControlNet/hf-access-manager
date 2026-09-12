@@ -1,11 +1,10 @@
 /**
- * Decides which gated-form answers are shown inline on a request row.
+ * Orders the gated-form answers shown on a request row.
  *
  * Hugging Face gated forms are free-form: every repository owner defines their
- * own questions. The dashboard shows every answer on the list itself, so the
- * only decision left is ordering — which four answers earn the always-visible
- * slots, which single answer is the long narrative, and which are folded into
- * the in-place expander.
+ * own questions. Every answer is rendered on the list, so nothing here decides
+ * what to hide — only what a reviewer should read first, and which single
+ * answer is the long narrative that belongs under the grid rather than in it.
  */
 
 export interface RequestField {
@@ -16,30 +15,15 @@ export interface RequestField {
 }
 
 export interface RequestFieldSummary {
-  /**
-   * Rendered on the row itself, deciding answers first. Only a form long
-   * enough to swallow the screen overflows into `extra`.
-   */
-  inline: RequestField[];
+  /** Every answer except the narrative, the deciding ones first. */
+  fields: RequestField[];
   /** The long free-text answer ("intended use"), rendered under the grid. */
   narrative: RequestField | null;
-  /** The overflow of a pathologically long form, expanded in place. */
-  extra: RequestField[];
   /** Every answer the form carries, including blank ones. */
   total: number;
   /** How many of those were left blank. */
   emptyCount: number;
 }
-
-/**
- * Answers are meant to be read without expanding anything, so this is a guard
- * against one absurd form owning the whole viewport, not a display budget.
- * Real gated forms ask a handful of questions and never reach it.
- */
-export const INLINE_LIMIT = 12;
-
-/** How many slots are assigned by question meaning before form order takes over. */
-export const PRIORITY_SLOTS = 4;
 
 /** Answers longer than this are clipped before they reach the DOM. */
 export const MAX_VALUE_LENGTH = 4000;
@@ -115,29 +99,26 @@ export function summarizeRequestFields(fields: Record<string, unknown> | undefin
 
   // 2. The answers a reviewer decides on lead the row, whatever order the
   //    repository owner happened to put them in.
-  const inline: RequestField[] = [];
+  const ordered: RequestField[] = [];
   for (const pattern of PRIMARY_PATTERNS) {
-    if (inline.length >= PRIORITY_SLOTS) break;
     const match = all.find((f) => !claimed.has(f.key) && pattern.test(f.key));
     if (match) {
-      inline.push(match);
+      ordered.push(match);
       claimed.add(match.key);
     }
   }
 
-  // 3. Then every remaining answer in the form's own order — answered ones
-  //    first, so a blank answer is never what gets pushed out of sight.
+  // 3. Then every remaining answer — nothing is ever withheld from the row —
+  //    answered ones first, so the row leads with substance.
   const remaining = all.filter((f) => !claimed.has(f.key));
-  for (const field of [...remaining.filter((f) => f.value !== null), ...remaining.filter((f) => f.value === null)]) {
-    if (inline.length >= INLINE_LIMIT) break;
-    inline.push(field);
-    claimed.add(field.key);
-  }
+  ordered.push(
+    ...remaining.filter((f) => f.value !== null),
+    ...remaining.filter((f) => f.value === null)
+  );
 
   return {
-    inline,
+    fields: ordered,
     narrative,
-    extra: all.filter((f) => !claimed.has(f.key)),
     total: all.length,
     emptyCount: all.filter((f) => f.value === null).length,
   };

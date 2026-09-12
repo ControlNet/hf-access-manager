@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  INLINE_LIMIT,
   MAX_VALUE_LENGTH,
-  PRIORITY_SLOTS,
   formatFieldValue,
   isThinRequest,
   summarizeRequestFields,
@@ -44,7 +42,7 @@ describe("summarizeRequestFields", () => {
     });
 
     // Deciding answers lead; everything else still rides along on the row.
-    expect(summary.inline.map((f) => f.key)).toEqual([
+    expect(summary.fields.map((f) => f.key)).toEqual([
       "affiliation",
       "jobTitle",
       "country",
@@ -52,23 +50,14 @@ describe("summarizeRequestFields", () => {
       "newsletter",
     ]);
     expect(summary.narrative?.key).toBe("intended_use");
-    expect(summary.extra).toEqual([]);
     expect(summary.total).toBe(6);
   });
 
-  it("keeps an ordinary form entirely on the row", () => {
-    const fields = Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`q${i}`, `answer ${i}`]));
+  it.each([9, 20, 40])("withholds nothing, whatever the form's length (%i answers)", (count) => {
+    const fields = Object.fromEntries(Array.from({ length: count }, (_, i) => [`q${i}`, `answer ${i}`]));
     const summary = summarizeRequestFields(fields);
-    expect(summary.inline).toHaveLength(9);
-    expect(summary.extra).toEqual([]);
-  });
-
-  it("overflows only a form long enough to swallow the viewport", () => {
-    const fields = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`q${i}`, `answer ${i}`]));
-    const summary = summarizeRequestFields(fields);
-    expect(summary.inline).toHaveLength(INLINE_LIMIT);
-    expect(summary.inline.length + summary.extra.length + (summary.narrative ? 1 : 0)).toBe(20);
-    expect(PRIORITY_SLOTS).toBeLessThan(INLINE_LIMIT);
+    expect(summary.fields).toHaveLength(count);
+    expect(summary.total).toBe(count);
   });
 
   it("falls back to the longest prose answer when no question is named like a purpose", () => {
@@ -82,18 +71,18 @@ describe("summarizeRequestFields", () => {
 
   it("keeps a blank answer out of an inline slot when an answered one is waiting", () => {
     const summary = summarizeRequestFields({ a: null, b: null, c: null, d: null, e: "answered" });
-    expect(summary.inline[0].key).toBe("e");
-    expect(summary.inline.map((f) => f.value)).toContain("answered");
+    expect(summary.fields[0].key).toBe("e");
+    expect(summary.fields.map((f) => f.value)).toContain("answered");
   });
 
   it("reports labels, blank answers and an empty form without inventing fields", () => {
     const summary = summarizeRequestFields({ intendedUsage: null, company_name: "" });
-    expect(summary.inline[0].label).toBe("Company name");
+    expect(summary.fields[0].label).toBe("Company name");
     expect(summary.emptyCount).toBe(2);
     expect(summary.narrative).toBeNull();
 
     const none = summarizeRequestFields(undefined);
-    expect(none).toMatchObject({ inline: [], extra: [], narrative: null, total: 0, emptyCount: 0 });
+    expect(none).toMatchObject({ fields: [], narrative: null, total: 0, emptyCount: 0 });
   });
 });
 

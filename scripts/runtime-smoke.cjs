@@ -118,7 +118,35 @@ async function main() {
   const rotatedCookie = (rotatedLogin.headers.get("set-cookie") || "").split(";")[0];
   const logout = await request("/api/auth/logout", { method: "POST", headers: { Origin: origin, Cookie: rotatedCookie } });
   check(logout.ok && /expires=Thu, 01 Jan 1970/i.test(logout.headers.get("set-cookie") || ""), "Logout must clear the browser cookie");
-  console.log("Runtime smoke passed: non-root, runtime env, authentication, allowlist, CSRF, headers, secret isolation, password rotation, logout.");
+
+  await stop();
+  config.AUTH_SECRET = "";
+  await start();
+  check((await request("/api/access/requests", { headers: { Cookie: rotatedCookie } })).status === 401,
+    "An explicit-key cookie must not authenticate under a generated key");
+  const automaticLogin = await login(config.APP_PASSWORD);
+  check(automaticLogin.ok, "Login must work without a configured AUTH_SECRET");
+  const automaticCookie = (automaticLogin.headers.get("set-cookie") || "").split(";")[0];
+  const automaticHome = await request("/", { headers: { Cookie: automaticCookie } });
+  check(automaticHome.ok, "Middleware and server page must agree on the generated signing key");
+  await automaticHome.arrayBuffer();
+  check((await request("/login", { headers: { Cookie: automaticCookie } })).status === 307,
+    "Middleware must verify generated-key sessions on the login page");
+  for (const action of ["approve", "reject", "revoke", "grant"]) {
+    const response = await request(`/api/access/${action}`, {
+      method: "POST", headers: { Origin: origin, Cookie: automaticCookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ repo: { type: "model", repoId: "outside/allowlist" }, username: "synthetic-user" }),
+    });
+    check(response.status === 403 && (await response.json()).error?.code === "FORBIDDEN_REPOSITORY",
+      "Each API handler must recognize generated-key sessions and still enforce the allowlist");
+  }
+
+  await stop();
+  await start();
+  check((await request("/api/access/requests", { headers: { Cookie: automaticCookie } })).status === 401,
+    "Restart without AUTH_SECRET must invalidate the previous generated-key cookie");
+  check((await login(config.APP_PASSWORD)).ok, "A fresh generated key must permit a new login after restart");
+  console.log("Runtime smoke passed: non-root, runtime env, authentication, allowlist, CSRF, headers, secret isolation, password rotation, logout, optional AUTH_SECRET and restart invalidation.");
 }
 
 main().catch(error => { console.error(error.message); process.exitCode = 1; }).finally(stop);

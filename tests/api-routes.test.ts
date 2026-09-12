@@ -38,6 +38,19 @@ beforeEach(async () => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); resetEnvCache(); });
 
 describe("actual API route security", () => {
+  it("authenticates every handler using a generated secret without weakening repository checks", async () => {
+    vi.stubEnv("AUTH_SECRET", undefined);
+    vi.stubEnv("VERCEL", undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    resetEnvCache();
+    cookie = `hf_access_session=${await createSessionToken()}`;
+    for (const handler of [approve, reject, revoke, grant]) {
+      const response = await handler(req({ repo: { ...repo, repoId: "outside/repo" }, username: "synthetic-user" }));
+      expect(response.status).toBe(403);
+      expect((await response.json()).error.code).toBe("FORBIDDEN_REPOSITORY");
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it.each([approve, reject, revoke, grant, requests, repositories, logout])("requires a valid session without middleware", async handler => {
     expect((await handler(req({ repo, username: "synthetic-user" }, { cookie: "" }))).status).toBe(401);
     expect(fetch).not.toHaveBeenCalled();

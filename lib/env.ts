@@ -2,6 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { ManagedRepository } from "./types";
 import { parseRepositories } from "./repositories";
+import { initializeAuthSecret } from "./runtime-auth-secret";
 
 const envSchema = z.object({
   HF_TOKEN: z
@@ -50,7 +51,7 @@ export function getEnv(): AppConfig {
     HF_TOKEN: process.env.HF_TOKEN,
     HF_REPOSITORIES: process.env.HF_REPOSITORIES,
     APP_PASSWORD: process.env.APP_PASSWORD,
-    AUTH_SECRET: process.env.AUTH_SECRET,
+    AUTH_SECRET: initializeAuthSecret(),
     SESSION_MAX_AGE: process.env.SESSION_MAX_AGE,
   });
 

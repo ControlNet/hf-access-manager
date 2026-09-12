@@ -88,7 +88,7 @@ Configure the following variables in your deployment environment or `.env` file:
 | `HF_TOKEN` | **Yes** | — | Hugging Face Access Token with `write` or `admin` permissions on the managed repositories. |
 | `HF_REPOSITORIES` | **Yes** | — | Comma-separated list of managed repositories in format `<type>:<owner>/<name>`. |
 | `APP_PASSWORD` | **Yes** | — | Shared password used by trusted reviewers to sign in (minimum 16 characters). |
-| `AUTH_SECRET` | **Yes** | — | Secret string (minimum 32 characters) used to sign and verify session JWT cookies. |
+| `AUTH_SECRET` | Single instance: No; Vercel/multiple instances: **Yes** | Random in-memory key | Explicit values must have at least 32 characters. Without one, restarting invalidates all sessions. |
 | `SESSION_MAX_AGE` | No | `604800` | Integer seconds from 1 to 31536000; defaults to 7 days. |
 | `APP_ORIGIN` | No | HTTPS + request Host in production | Canonical public origin including port when nonstandard; no path/query/fragment. Recommended behind a proxy. |
 
@@ -122,7 +122,9 @@ Create a `.env.local` file:
 cp .env.example .env.local
 ```
 
-Fill `.env.local` with your scoped Hugging Face token, actual repository identifiers, a random reviewer password, and a separate random signing secret. The example file deliberately leaves required values empty. Keep this file private; Git and Docker exclude it. Use a password manager or secret manager to generate and store credentials.
+Fill `.env.local` with your scoped Hugging Face token, actual repository identifiers, and a random reviewer password. For a single local or Docker instance, `AUTH_SECRET` may be omitted or left empty: the Node startup hook generates a 256-bit random key shared with its Middleware and server routes. It is kept only in process memory, never printed or saved; restarting requires reviewers to log in again. Set an explicit secret of at least 32 characters to preserve sessions across restarts, and always use the same explicit secret on Vercel or across multiple instances. Vercel startup rejects a missing secret.
+
+The example file deliberately leaves required values empty. Keep `.env.local` private; Git and Docker exclude it. Use a password manager or secret manager to generate and store credentials.
 
 ### 3. Run Development Server
 ```bash
@@ -212,7 +214,7 @@ services:
    - The shared password protects the web UI and must be at least 16 characters long.
    - When a collaborator leaves, rotate `APP_PASSWORD` and restart/redeploy every instance. Updating an environment file alone does not alter a running process. Protect or retire historical deployments that still hold the old values.
 3. **Keep `AUTH_SECRET` Private & Long**:
-   - Ensure `AUTH_SECRET` is at least 32 random characters (e.g. `openssl rand -hex 32`).
+   - When configured, use at least 32 random characters (e.g. `openssl rand -hex 32`). Without it, single-instance startup generates a temporary key; restarts invalidate existing sessions. Vercel and multi-instance deployments require an explicit shared value.
 4. **HTTPS in Production**:
    - Cookies are configured with `SameSite=Lax` and `Secure` automatically in production environments. Ensure your self-hosted reverse proxy (Nginx, Caddy, Cloudflare) enforces HTTPS.
 5. **Credential and PII Boundaries**:

@@ -332,6 +332,13 @@ export function AccessRequestList({
     });
   }, [requests, selectedType, selectedRepoKey, searchQuery, currentTab]);
 
+  // Prune before committing the UI so hidden selections cannot survive a filter
+  // change or silently return when a filter is cleared. The subset check converges.
+  const visibleSelectedIds = new Set(filteredRequests.filter(r => selectedIds.has(r.id)).map(r => r.id));
+  if (visibleSelectedIds.size !== selectedIds.size) {
+    setSelectedIds(visibleSelectedIds);
+  }
+
   // Selection handlers
   const handleToggleSelect = (id: string) => {
     if (mutationLock.current || readingRef.current) return;
@@ -445,7 +452,7 @@ export function AccessRequestList({
   };
 
   const handleBulk = async (action: "approve" | "reject") => {
-    const selectedRequests = requests.filter(r => selectedIds.has(r.id) && r.status === "pending");
+    const selectedRequests = filteredRequests.filter(r => selectedIds.has(r.id) && r.status === "pending");
     if (!selectedRequests.length || selectedRequests.length > 100 || !beginMutation()) return;
     setIsBulkProcessing(true);
     setBulkActionInProgress(action);

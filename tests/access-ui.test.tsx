@@ -23,6 +23,50 @@ const setup = (status: RequestStatus = "pending", onRefreshed = vi.fn()) => rend
 const switchTab = (name: string) => fireEvent.mouseDown(screen.getByRole("tab", { name: new RegExp(`^${name}`) }), { button: 0, ctrlKey: false });
 
 describe("real dashboard integration", () => {
+  it.each(["search", "repository", "type"])("drops hidden selections after changing the %s filter", async filter => {
+    const other = { type: "dataset" as const, repoId: "review/other" };
+    const hidden = row("pending", "synthetic-hidden");
+    const visible = { ...row("pending", "synthetic-visible"), id: "dataset:review/other:synthetic-visible", repository: other };
+    const fetcher = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ data: {
+      requests: [hidden, visible], errors: [], hasMore: false, truncated: false,
+      repositoryPagination: { "model:review/synthetic": {}, "dataset:review/other": {} },
+    } })));
+    vi.stubGlobal("fetch", fetcher);
+    render(<AccessRequestList configuredRepositories={[repo, other]} />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select synthetic-hidden" }));
+
+    const control = filter === "search"
+      ? screen.getByRole("searchbox")
+      : screen.getByRole("combobox", { name: filter === "repository" ? "Filter by repository" : "Filter by repository type" });
+    fireEvent.change(control, { target: { value: filter === "search" ? "synthetic-visible" : filter === "repository" ? "dataset:review/other" : "dataset" } });
+
+    expect(screen.queryByText("@synthetic-hidden")).toBeNull();
+    expect(screen.getByText("@synthetic-visible")).toBeTruthy();
+    expect(screen.queryAllByRole("button", { name: /^(Approve|Reject) \d/ })).toHaveLength(0);
+    expect(fetcher.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+
+    fireEvent.change(control, { target: { value: filter === "search" ? "" : "all" } });
+    expect(screen.getByRole("checkbox", { name: "Select synthetic-hidden" }).getAttribute("data-state")).toBe("unchecked");
+  });
+
+  it.each(["Approve", "Reject"])("preserves visible selections and submits only those on bulk %s", async action => {
+    const fetcher = vi.fn().mockImplementation(async (_url, init) => init?.method === "POST"
+      ? new Response(JSON.stringify({ data: { succeeded: 1, failed: 0, errors: [] } }))
+      : response("pending", { many: 2 }));
+    vi.stubGlobal("fetch", fetcher);
+    setup();
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select synthetic-user-0" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select synthetic-user-1" }));
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "synthetic-user-1" } });
+
+    expect(screen.getByRole("checkbox", { name: "Select synthetic-user-1" }).getAttribute("data-state")).toBe("checked");
+    expect(screen.getByRole("button", { name: "Deselect all" })).toBeTruthy();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: `${action} 1` })));
+    const posts = fetcher.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(JSON.parse(posts[0][1].body).items).toEqual([{ repo, username: "synthetic-user-1" }]);
+  });
+
   it("leaves no actionable surface for a request reconciliation no longer finds", async () => {
     let posted = false;
     vi.stubGlobal("fetch", vi.fn().mockImplementation(async (_url, init) => {

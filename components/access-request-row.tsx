@@ -161,10 +161,10 @@ export function AccessRequestRow({
             )}
           </div>
 
-          {/* Collapsed: the four answers that decide most reviews. */}
-          {!expanded && summary.primary.length > 0 && (
-            <div className="grid grid-cols-2 gap-x-5 gap-y-[3px] sm:grid-cols-4">
-              {summary.primary.map((field) => (
+          {/* Every answer the form asked, deciding ones first. */}
+          {!expanded && summary.inline.length > 0 && (
+            <div className="grid grid-cols-2 gap-x-5 gap-y-2 sm:grid-cols-4">
+              {summary.inline.map((field) => (
                 <FieldCell key={field.key} field={field} />
               ))}
             </div>
@@ -173,7 +173,7 @@ export function AccessRequestRow({
           {/* Expanded: every answer the form carries, in place. */}
           {expanded && summary.total > 0 && (
             <div className="grid grid-cols-1 gap-px overflow-hidden rounded-md border border-border bg-border sm:grid-cols-2 lg:grid-cols-3">
-              {[...summary.primary, ...summary.extra].map((field) => (
+              {[...summary.inline, ...summary.extra].map((field) => (
                 <div key={field.key} className="bg-muted px-[11px] py-2">
                   <FieldCell field={field} />
                 </div>

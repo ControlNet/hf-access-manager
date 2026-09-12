@@ -82,7 +82,7 @@ describe("real dashboard integration", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("shows every answer on the list itself, expanding the long tail in place", async () => {
+  it("shows every answer of an ordinary form on the list, with no second surface", async () => {
     const detailed = {
       ...row(),
       fullName: "Synthetic Reviewer",
@@ -103,24 +103,39 @@ describe("real dashboard integration", () => {
     } }))));
     render(<AccessRequestList configuredRepositories={[repo]} />);
 
-    // Collapsed: the four deciding answers plus the narrative, no second surface.
+    // Nothing is clicked: every answer the form asked is already on the row.
     await screen.findByText("Example University");
-    expect(screen.getByText("PhD student")).toBeTruthy();
-    expect(screen.getByText("Australia")).toBeTruthy();
+    for (const answer of ["PhD student", "Australia", "REC-2024-118"]) {
+      expect(screen.getByText(answer)).toBeTruthy();
+    }
     expect(screen.getByText(/Synthetic purpose text/)).toBeTruthy();
-    expect(screen.queryByText("REC-2024-118")).toBeNull();
+    expect(screen.getByText("Newsletter")).toBeTruthy();
+    expect(screen.getAllByText("not provided").length).toBeGreaterThan(0);
     expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("button", { name: /more answers/ })).toBeNull();
+  });
 
-    const expander = screen.getByRole("button", { name: /\+3 more answers/ });
+  it("expands a form long enough to swallow the row, in place", async () => {
+    const huge = {
+      ...row(),
+      fields: Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`question_${i}`, `answer ${i}`])),
+    };
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => new Response(JSON.stringify({ data: {
+      requests: [huge], errors: [], hasMore: false, truncated: false,
+      repositoryPagination: { "model:review/synthetic": {} },
+    } }))));
+    render(<AccessRequestList configuredRepositories={[repo]} />);
+
+    await screen.findByText("answer 0");
+    expect(screen.queryByText("answer 19")).toBeNull();
+
+    const expander = screen.getByRole("button", { name: /\+8 more answers/ });
     expect(expander.getAttribute("aria-expanded")).toBe("false");
-
     fireEvent.click(expander);
 
-    // Expanded in place: the rest of the form, still inside the row.
-    expect(screen.getByText("REC-2024-118")).toBeTruthy();
-    expect(screen.getByText("Example University")).toBeTruthy();
+    expect(screen.getByText("answer 19")).toBeTruthy();
+    expect(screen.getByText("answer 0")).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.getByRole("button", { name: /Hide extra answers/ })).toBeTruthy();
   });
 
   it("does not turn a drained truncated window into inbox zero", async () => {

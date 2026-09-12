@@ -16,11 +16,14 @@ export interface RequestField {
 }
 
 export interface RequestFieldSummary {
-  /** Always rendered inline, at most PRIMARY_LIMIT of them. */
-  primary: RequestField[];
+  /**
+   * Rendered on the row itself, deciding answers first. Only a form long
+   * enough to swallow the screen overflows into `extra`.
+   */
+  inline: RequestField[];
   /** The long free-text answer ("intended use"), rendered under the grid. */
   narrative: RequestField | null;
-  /** Everything else, revealed by expanding the row in place. */
+  /** The overflow of a pathologically long form, expanded in place. */
   extra: RequestField[];
   /** Every answer the form carries, including blank ones. */
   total: number;
@@ -28,12 +31,20 @@ export interface RequestFieldSummary {
   emptyCount: number;
 }
 
-export const PRIMARY_LIMIT = 4;
+/**
+ * Answers are meant to be read without expanding anything, so this is a guard
+ * against one absurd form owning the whole viewport, not a display budget.
+ * Real gated forms ask a handful of questions and never reach it.
+ */
+export const INLINE_LIMIT = 12;
+
+/** How many slots are assigned by question meaning before form order takes over. */
+export const PRIORITY_SLOTS = 4;
 
 /** Answers longer than this are clipped before they reach the DOM. */
 export const MAX_VALUE_LENGTH = 4000;
 
-/** Ordered: the first pattern that matches an unclaimed field wins its slot. */
+/** Ordered: the first pattern that matches an unclaimed field leads the row. */
 const PRIMARY_PATTERNS: RegExp[] = [
   /affiliation|organi[sz]ation|institution|university|company|employer|\blab\b|department/i,
   /\brole\b|position|job|occupation|\btitle\b|status/i,
@@ -102,28 +113,29 @@ export function summarizeRequestFields(fields: Record<string, unknown> | undefin
   }
   if (narrative) claimed.add(narrative.key);
 
-  // 2. Primary slots, by question meaning rather than by form order.
-  const primary: RequestField[] = [];
+  // 2. The answers a reviewer decides on lead the row, whatever order the
+  //    repository owner happened to put them in.
+  const inline: RequestField[] = [];
   for (const pattern of PRIMARY_PATTERNS) {
-    if (primary.length >= PRIMARY_LIMIT) break;
+    if (inline.length >= PRIORITY_SLOTS) break;
     const match = all.find((f) => !claimed.has(f.key) && pattern.test(f.key));
     if (match) {
-      primary.push(match);
+      inline.push(match);
       claimed.add(match.key);
     }
   }
 
-  // 3. Fill any leftover slots in the form's own order, answered fields first so
-  //    a blank answer never pushes a real one into the expander.
+  // 3. Then every remaining answer in the form's own order — answered ones
+  //    first, so a blank answer is never what gets pushed out of sight.
   const remaining = all.filter((f) => !claimed.has(f.key));
   for (const field of [...remaining.filter((f) => f.value !== null), ...remaining.filter((f) => f.value === null)]) {
-    if (primary.length >= PRIMARY_LIMIT) break;
-    primary.push(field);
+    if (inline.length >= INLINE_LIMIT) break;
+    inline.push(field);
     claimed.add(field.key);
   }
 
   return {
-    primary,
+    inline,
     narrative,
     extra: all.filter((f) => !claimed.has(f.key)),
     total: all.length,
